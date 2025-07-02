@@ -63,7 +63,7 @@ export interface DevicePort {
     id: string;
     name: string;
     type: PortType;
-    position: Point; // relative to device
+    position: Point;
     isConnected: boolean;
     connectionId?: string;
 }

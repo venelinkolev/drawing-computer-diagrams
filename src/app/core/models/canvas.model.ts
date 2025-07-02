@@ -1,4 +1,4 @@
-import { Point } from "./device.model";
+import { Point } from './device.model';
 
 export interface CanvasState {
     zoom: number;

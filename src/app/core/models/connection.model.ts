@@ -1,4 +1,4 @@
-import { Point } from "./device.model";
+import { Point } from './device.model';
 
 export enum ConnectionType {
     ETHERNET = 'ethernet',
@@ -43,7 +43,7 @@ export interface Connection {
     targetDeviceId: string;
     sourcePortId?: string;
     targetPortId?: string;
-    points: Point[]; // path points for routing
+    points: Point[];
     metadata: ConnectionMetadata;
     visualStyle: ConnectionVisualStyle;
     isSelected: boolean;

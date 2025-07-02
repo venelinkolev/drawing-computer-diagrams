@@ -1,5 +1,6 @@
-import { Connection } from "./connection.model";
-import { Device, Point, Size } from "./device.model";
+import { Device } from './device.model';
+import { Connection } from './connection.model';
+import { Size, Point } from './device.model';
 
 export interface ProjectMetadata {
     title: string;
@@ -18,19 +19,7 @@ export interface ProjectSettings {
     snapToGrid: boolean;
     theme: 'light' | 'dark';
     autoSave: boolean;
-    autoSaveInterval: number; // in seconds
-}
-
-export interface Project {
-    id: string;
-    metadata: ProjectMetadata;
-    settings: ProjectSettings;
-    devices: Device[];
-    connections: Connection[];
-    annotations: Annotation[];
-    createdAt: Date;
-    updatedAt: Date;
-    lastSavedAt?: Date;
+    autoSaveInterval: number;
 }
 
 export interface Annotation {
@@ -46,4 +35,16 @@ export interface Annotation {
         padding: number;
     };
     createdAt: Date;
+}
+
+export interface Project {
+    id: string;
+    metadata: ProjectMetadata;
+    settings: ProjectSettings;
+    devices: Device[];
+    connections: Connection[];
+    annotations: Annotation[];
+    createdAt: Date;
+    updatedAt: Date;
+    lastSavedAt?: Date;
 }
