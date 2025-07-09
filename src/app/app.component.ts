@@ -35,6 +35,7 @@ import {
 
 // Services
 import { ProjectStateService } from '@core/services/project-state.service';
+import { EditorStateService } from '@core/services/editor-state.service';
 
 @Component({
   selector: 'app-root',
@@ -118,6 +119,80 @@ import { ProjectStateService } from '@core/services/project-state.service';
           </mat-card-content>
         </mat-card>
 
+        <!-- NEW: Editor Controls -->
+        <mat-card style="margin-top: 16px;">
+          <mat-card-header>
+            <mat-card-title>Editor Controls</mat-card-title>
+          </mat-card-header>
+          <mat-card-content style="margin-top: 16px;">
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              
+              <!-- Mode Toggle -->
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  mat-raised-button 
+                  [color]="(editorState.currentMode$ | async) === 'select' ? 'primary' : 'basic'"
+                  (click)="setEditorMode('select')"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>mouse</mat-icon>
+                  Select
+                </button>
+                <button 
+                  mat-raised-button 
+                  [color]="(editorState.currentMode$ | async) === 'pan' ? 'primary' : 'basic'"
+                  (click)="setEditorMode('pan')"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>pan_tool</mat-icon>
+                  Pan
+                </button>
+              </div>
+
+              <!-- Zoom Controls -->
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button 
+                  mat-icon-button 
+                  (click)="zoomIn()"
+                  [disabled]="!(editorState.canZoomIn$ | async) || !(editorState.isInitialized$ | async)">
+                  <mat-icon>zoom_in</mat-icon>
+                </button>
+                <span style="min-width: 60px; text-align: center; font-size: 14px;">
+                  {{ (editorState.zoomPercentage$ | async) }}%
+                </span>
+                <button 
+                  mat-icon-button 
+                  (click)="zoomOut()"
+                  [disabled]="!(editorState.canZoomOut$ | async) || !(editorState.isInitialized$ | async)">
+                  <mat-icon>zoom_out</mat-icon>
+                </button>
+                <button 
+                  mat-icon-button 
+                  (click)="resetZoom()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>center_focus_strong</mat-icon>
+                </button>
+              </div>
+
+              <!-- Quick Actions -->
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  mat-stroked-button 
+                  (click)="fitToScreen()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>fit_screen</mat-icon>
+                  Fit
+                </button>
+                <button 
+                  mat-stroked-button 
+                  (click)="centerCanvas()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>gps_fixed</mat-icon>
+                  Center
+                </button>
+              </div>
+            </div>
+          </mat-card-content>
+        </mat-card>
+
         <mat-card style="margin-bottom: 16px;">
           <mat-card-header>
             <mat-card-title>Device Library</mat-card-title>
@@ -145,6 +220,25 @@ import { ProjectStateService } from '@core/services/project-state.service';
                 [disabled]="!(projectState.hasActiveProject$ | async)">
                 {{ DEVICE_CONFIG[DeviceType.SERVER].icon }} Server
               </button>
+            </div>
+          </mat-card-content>
+        </mat-card>
+
+        <!-- NEW: Editor State Demo -->
+        <mat-card style="margin-top: 16px;">
+          <mat-card-header>
+            <mat-card-title>Editor State</mat-card-title>
+          </mat-card-header>
+          <mat-card-content style="margin-top: 16px;">
+            <div style="font-size: 12px; line-height: 1.6;">
+              <div><strong>Initialized:</strong> {{ (editorState.isInitialized$ | async) ? '✅ Yes' : '❌ No' }}</div>
+              <div><strong>Mode:</strong> {{ (editorState.currentMode$ | async) }}</div>
+              <div><strong>Tool:</strong> {{ (editorState.currentTool$ | async) }}</div>
+              <div><strong>Zoom:</strong> {{ (editorState.zoomPercentage$ | async) }}%</div>
+              <div><strong>Can Zoom In:</strong> {{ (editorState.canZoomIn$ | async) ? '✅' : '❌' }}</div>
+              <div><strong>Can Zoom Out:</strong> {{ (editorState.canZoomOut$ | async) ? '✅' : '❌' }}</div>
+              <div><strong>Selection:</strong> {{ (editorState.selectionCount$ | async) }} items</div>
+              <div><strong>Multi-Select:</strong> {{ (editorState.isMultiSelecting$ | async) ? '✅' : '❌' }}</div>
             </div>
           </mat-card-content>
         </mat-card>
@@ -180,12 +274,12 @@ import { ProjectStateService } from '@core/services/project-state.service';
               'color': 'white'
             }">
             <h4 style="margin: 0 0 8px 0;">
-              {{ (projectState.hasActiveProject$ | async) ? '🎉 Project Loaded!' : '⚠️ No Active Project' }}
+              {{ (projectState.hasActiveProject$ | async) ? '🎉 Project + Editor Ready!' : '⚠️ Create Project to Start' }}
             </h4>
             <p style="margin: 0; font-size: 14px;">
               {{ (projectState.hasActiveProject$ | async) 
-                ? 'ProjectStateService managing project state reactively' 
-                : 'Create a new project to start designing' }}
+                ? 'EditorStateService + ProjectStateService active' 
+                : 'Create a new project to enable editor' }}
             </p>
           </mat-card>
         </div>
@@ -330,6 +424,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   // Inject ProjectStateService and ChangeDetectorRef
   readonly projectState = inject(ProjectStateService);
+  readonly editorState = inject(EditorStateService);
   private readonly cdr = inject(ChangeDetectorRef);
 
   // Expose imports for template
@@ -364,6 +459,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       .subscribe(count => {
         console.log(`🎯 Device count updated: ${count}`);
       });
+
+    // NEW: Editor state logging for debugging
+    this.editorState.isInitialized$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(initialized => {
+        console.log(`🎯 Editor initialized: ${initialized}`);
+      });
+
+    this.editorState.zoomPercentage$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(zoom => {
+        console.log(`🔍 Editor zoom: ${zoom}%`);
+      });
   }
 
   ngAfterViewInit(): void {
@@ -386,13 +494,110 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  // === NEW: EDITOR STATE METHODS ===
+
+  /**
+   * Set editor mode (SELECT, PAN, CONNECT, ANNOTATE)
+   */
+  setEditorMode(mode: 'select' | 'pan' | 'connect' | 'annotate'): void {
+    const canvasMode = mode as CanvasMode;
+    const result = this.editorState.setMode(canvasMode);
+    if (result.success) {
+      this.currentCanvasMode = canvasMode;
+      console.log(`🔧 Mode set to: ${mode}`);
+    } else {
+      console.error('❌ Failed to set mode:', result.error);
+    }
+  }
+
+  /**
+   * Zoom in using EditorStateService
+   */
+  zoomIn(): void {
+    const viewport = this.editorState.getCurrentState().viewport;
+    const centerPoint: Point = { x: viewport.centerX, y: viewport.centerY };
+    const result = this.editorState.zoomIn(centerPoint);
+
+    if (result.success && this.stage) {
+      // Apply zoom to Konva stage
+      const newZoom = this.editorState.getCurrentState().zoom.level;
+      this.stage.scale({ x: newZoom, y: newZoom });
+      this.layer.batchDraw();
+      console.log(`🔍 Zoomed in to: ${Math.round(newZoom * 100)}%`);
+    }
+  }
+
+  /**
+   * Zoom out using EditorStateService
+   */
+  zoomOut(): void {
+    const viewport = this.editorState.getCurrentState().viewport;
+    const centerPoint: Point = { x: viewport.centerX, y: viewport.centerY };
+    const result = this.editorState.zoomOut(centerPoint);
+
+    if (result.success && this.stage) {
+      // Apply zoom to Konva stage
+      const newZoom = this.editorState.getCurrentState().zoom.level;
+      this.stage.scale({ x: newZoom, y: newZoom });
+      this.layer.batchDraw();
+      console.log(`🔍 Zoomed out to: ${Math.round(newZoom * 100)}%`);
+    }
+  }
+
+  /**
+   * Reset zoom to 100%
+   */
+  resetZoom(): void {
+    const result = this.editorState.resetZoom();
+
+    if (result.success && this.stage) {
+      // Apply zoom to Konva stage
+      this.stage.scale({ x: 1, y: 1 });
+      this.stage.position({ x: 0, y: 0 });
+      this.layer.batchDraw();
+      console.log(`🔍 Zoom reset to 100%`);
+    }
+  }
+
+  /**
+   * Fit canvas content to screen
+   */
+  fitToScreen(): void {
+    const result = this.editorState.fitToScreen();
+
+    if (result.success && this.stage) {
+      // Apply zoom to Konva stage
+      const editorState = this.editorState.getCurrentState();
+      this.stage.scale({ x: editorState.zoom.level, y: editorState.zoom.level });
+      this.layer.batchDraw();
+      console.log(`📏 Fit to screen: ${Math.round(editorState.zoom.level * 100)}%`);
+    }
+  }
+
+  /**
+   * Center canvas viewport
+   */
+  centerCanvas(): void {
+    const viewport = this.editorState.getCurrentState().viewport;
+    const centerPoint: Point = { x: viewport.centerX, y: viewport.centerY };
+    const result = this.editorState.centerOn(centerPoint);
+
+    if (result.success && this.stage) {
+      // Apply pan to Konva stage
+      const panState = this.editorState.getCurrentState().pan;
+      this.stage.position({ x: panState.position.x, y: panState.position.y });
+      this.layer.batchDraw();
+      console.log(`🎯 Canvas centered`);
+    }
+  }
+
   // === PROJECT ACTIONS ===
 
   createNewProject(): void {
     const project = this.projectState.createNewProject({
       title: `Network Diagram ${new Date().toLocaleDateString()}`,
       author: 'Network Editor User',
-      description: 'Created with ProjectStateService',
+      description: 'Created with ProjectStateService + EditorStateService',
     });
 
     console.log('✅ New project created:', project.id);
@@ -541,6 +746,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.drawGrid();
     this.addZoomSupport();
     this.addSelectionHandling();
+
+    // NEW: Initialize EditorStateService with canvas dimensions
+    this.editorState.initializeEditor(container.offsetWidth, container.offsetHeight);
 
     window.addEventListener('resize', () => this.handleResize());
 
