@@ -36,6 +36,7 @@ import {
 // Services
 import { ProjectStateService } from '@core/services/project-state.service';
 import { EditorStateService } from '@core/services/editor-state.service';
+import { UndoRedoService } from '@core/services/undo-redo.service';
 
 @Component({
   selector: 'app-root',
@@ -189,6 +190,29 @@ import { EditorStateService } from '@core/services/editor-state.service';
                   Center
                 </button>
               </div>
+
+              <!-- Undo/Redo Controls -->
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  mat-stroked-button 
+                  color="accent"
+                  (click)="undoLastAction()"
+                  [disabled]="!(undoRedoService.canUndo$ | async)">
+                  <mat-icon>undo</mat-icon>
+                  Undo
+                </button>
+                <button 
+                  mat-stroked-button 
+                  color="accent"
+                  (click)="redoLastAction()"
+                  [disabled]="!(undoRedoService.canRedo$ | async)">
+                  <mat-icon>redo</mat-icon>
+                  Redo
+                </button>
+                <button mat-stroked-button (click)="testManualBatching()">
+                Test Manual Batching
+                </button>
+              </div>
             </div>
           </mat-card-content>
         </mat-card>
@@ -243,7 +267,33 @@ import { EditorStateService } from '@core/services/editor-state.service';
           </mat-card-content>
         </mat-card>
 
-        <mat-card>
+        <!-- NEW: Undo/Redo State -->
+        <mat-card style="margin-top: 16px;">
+          <mat-card-header>
+            <mat-card-title>Undo/Redo State</mat-card-title>
+          </mat-card-header>
+          <mat-card-content style="margin-top: 16px;">
+            <div style="font-size: 12px; line-height: 1.6;">
+              <div><strong>Can Undo:</strong> {{ (undoRedoService.canUndo$ | async) ? '✅ Yes' : '❌ No' }}</div>
+              <div><strong>Can Redo:</strong> {{ (undoRedoService.canRedo$ | async) ? '✅ Yes' : '❌ No' }}</div>
+              <div><strong>History Size:</strong> {{ (undoRedoService.historySize$ | async) }} commands</div>
+              <div><strong>Recording:</strong> {{ (undoRedoService.isRecording$ | async) ? '🔴 Active' : '⏸️ Paused' }}</div>
+              <div><strong>Batching:</strong> {{ (undoRedoService.isBatching$ | async) ? '📦 Active' : '❌ No' }}</div>
+            </div>
+            <div style="margin-top: 8px;">
+                <button 
+                  mat-stroked-button 
+                  color="warn" 
+                  (click)="clearUndoHistory()" 
+                  [disabled]="(undoRedoService.historySize$ | async) === 0"
+                  style="font-size: 11px; padding: 4px 8px;">
+                  Clear History
+                </button>
+              </div>
+          </mat-card-content>
+        </mat-card>
+
+        <mat-card style="margin-top: 16px;">
           <mat-card-header>
             <mat-card-title>Reactive State Demo</mat-card-title>
           </mat-card-header>
@@ -382,7 +432,7 @@ import { EditorStateService } from '@core/services/editor-state.service';
               <div>Grid Size: {{ gridSize }}px</div>
               <div>Snap Distance: {{ snapDistance }}px</div>
               <div>Max Devices: {{ appLimits.MAX_DEVICES }}</div>
-              <div>Zoom: {{ getZoomPercentage() }}%</div>
+              <div>Zoom: {{ (editorState.zoomPercentage$ | async) }}%</div>
             </div>
           </mat-card-content>
         </mat-card>
@@ -425,6 +475,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   // Inject ProjectStateService and ChangeDetectorRef
   readonly projectState = inject(ProjectStateService);
   readonly editorState = inject(EditorStateService);
+  readonly undoRedoService = inject(UndoRedoService);
   private readonly cdr = inject(ChangeDetectorRef);
 
   // Expose imports for template
@@ -447,7 +498,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   // Component state
   selectedDevice: Device | null = null;
-  zoomLevel: number = CANVAS_CONFIG.ZOOM.DEFAULT;
 
   // Manual subscription management
   private destroy$ = new Subject<void>();
@@ -471,6 +521,25 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(zoom => {
         console.log(`🔍 Editor zoom: ${zoom}%`);
+      });
+
+    // NEW: Undo/Redo state logging for debugging
+    this.undoRedoService.canUndo$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(canUndo => {
+        console.log(`↩️ Can undo: ${canUndo}`);
+      });
+
+    this.undoRedoService.canRedo$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(canRedo => {
+        console.log(`↪️ Can redo: ${canRedo}`);
+      });
+
+    this.undoRedoService.historySize$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(size => {
+        console.log(`📚 History size: ${size}`);
       });
   }
 
@@ -519,11 +588,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const result = this.editorState.zoomIn(centerPoint);
 
     if (result.success && this.stage) {
-      // Apply zoom to Konva stage
-      const newZoom = this.editorState.getCurrentState().zoom.level;
-      this.stage.scale({ x: newZoom, y: newZoom });
+      const editorState = this.editorState.getCurrentState();
+      this.stage.scale({ x: editorState.zoom.level, y: editorState.zoom.level });
+      this.stage.position({ x: editorState.pan.position.x, y: editorState.pan.position.y });
       this.layer.batchDraw();
-      console.log(`🔍 Zoomed in to: ${Math.round(newZoom * 100)}%`);
+      console.log(`🔍 Zoomed in to: ${Math.round(editorState.zoom.level * 100)}%`);
     }
   }
 
@@ -536,11 +605,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const result = this.editorState.zoomOut(centerPoint);
 
     if (result.success && this.stage) {
-      // Apply zoom to Konva stage
-      const newZoom = this.editorState.getCurrentState().zoom.level;
-      this.stage.scale({ x: newZoom, y: newZoom });
+      const editorState = this.editorState.getCurrentState();
+      this.stage.scale({ x: editorState.zoom.level, y: editorState.zoom.level });
+      this.stage.position({ x: editorState.pan.position.x, y: editorState.pan.position.y });
       this.layer.batchDraw();
-      console.log(`🔍 Zoomed out to: ${Math.round(newZoom * 100)}%`);
+      console.log(`🔍 Zoomed out to: ${Math.round(editorState.zoom.level * 100)}%`);
     }
   }
 
@@ -589,6 +658,57 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.layer.batchDraw();
       console.log(`🎯 Canvas centered`);
     }
+  }
+
+  // === NEW: UNDO/REDO METHODS ===
+
+  /**
+   * Undo last action
+   */
+  async undoLastAction(): Promise<void> {
+    console.log('↩️ AppComponent: Undoing last action...');
+    const result = await this.undoRedoService.undo();
+
+    if (result.success) {
+      console.log('✅ AppComponent: Undo successful');
+      // Force canvas refresh to reflect changes
+      this.forceRefreshCanvas();
+    } else {
+      console.error('❌ AppComponent: Undo failed:', result.error);
+    }
+  }
+
+  /**
+   * Redo last undone action
+   */
+  async redoLastAction(): Promise<void> {
+    console.log('↪️ AppComponent: Redoing last action...');
+    const result = await this.undoRedoService.redo();
+
+    if (result.success) {
+      console.log('✅ AppComponent: Redo successful');
+      // Force canvas refresh to reflect changes
+      this.forceRefreshCanvas();
+    } else {
+      console.error('❌ AppComponent: Redo failed:', result.error);
+    }
+  }
+
+  /**
+   * Clear undo/redo history
+   */
+  clearUndoHistory(): void {
+    this.undoRedoService.clearHistory();
+    console.log('🧹 AppComponent: Undo history cleared');
+  }
+
+  /**
+   * Toggle undo/redo recording
+   */
+  toggleUndoRecording(): void {
+    const currentState = this.undoRedoService.getHistoryState().isRecording;
+    this.undoRedoService.setRecording(!currentState);
+    console.log(`🎬 AppComponent: Undo recording ${!currentState ? 'enabled' : 'disabled'}`);
   }
 
   // === PROJECT ACTIONS ===
@@ -655,7 +775,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       rotation: 0,
       metadata: {
         name: `${type.charAt(0).toUpperCase() + type.slice(1)}_${project.devices.length + 1}`,
-        description: `${type} device created via ProjectStateService`,
+        description: `${type} device created via Command Pattern`,  // ➕ ОБНОВЕНО ОПИСАНИЕ
       },
       style: {
         fill: config.color,
@@ -672,10 +792,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     };
 
     try {
-      this.projectState.addDevice(device);
-      console.log(`✅ Device added: ${device.metadata.name}`);
+      // ➕ НОВА ЛОГИКА: Използвай Command Pattern
+      const command = this.undoRedoService.createAddDeviceCommand(device, this.projectState);
+      this.undoRedoService.executeCommand(command);
+
+      console.log(`✅ Device added via command: ${device.metadata.name}`);
     } catch (error) {
-      console.error('❌ Error adding device:', error);
+      console.error('❌ Error adding device via command:', error);
     }
   }
 
@@ -684,26 +807,125 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     const deviceName = this.selectedDevice.metadata.name;
     const deviceId = this.selectedDevice.id;
+    const deviceToDelete = { ...this.selectedDevice }; // Create copy for command
 
-    // Clear selection FIRST before removing from service
-    this.clearSelection();
+    try {
+      // ➕ НОВА ЛОГИКА: Използвай Command Pattern
+      const command = this.undoRedoService.createRemoveDeviceCommand(
+        deviceId,
+        deviceToDelete,
+        this.projectState
+      );
 
-    // Then remove from project
-    this.projectState.removeDevice(deviceId);
+      // Clear selection FIRST before executing command
+      this.clearSelection();
 
-    console.log(`🗑️ Device deleted: ${deviceName}`);
+      // Execute command
+      this.undoRedoService.executeCommand(command);
+
+      console.log(`✅ Device deleted via command: ${deviceName}`);
+    } catch (error) {
+      console.error('❌ Error deleting device via command:', error);
+    }
   }
 
   clearAllDevices(): void {
     const project = this.projectState.getCurrentProject();
-    if (!project) return;
+    if (!project || project.devices.length === 0) return;
 
-    // Remove all devices (which will trigger canvas re-render)
-    project.devices.forEach(device => {
-      this.projectState.removeDevice(device.id);
-    });
+    try {
+      // ➕ ОПРОСТЕНА ЛОГИКА: Създай batch команда директно
+      const devicesToRemove = [...project.devices]; // Копие на всички devices
 
-    console.log('🧹 All devices cleared');
+      console.log(`🔄 Creating batch command to clear ${devicesToRemove.length} devices`);
+
+      // Създай отделни команди за всяко устройство
+      const removeCommands = devicesToRemove.map(device =>
+        this.undoRedoService.createRemoveDeviceCommand(
+          device.id,
+          device,
+          this.projectState
+        )
+      );
+
+      // Създай batch команда с всички remove команди
+      const batchCommand = this.createBatchRemoveCommand(
+        removeCommands,
+        `Clear all devices (${devicesToRemove.length} items)`
+      );
+
+      // Изпълни batch командата
+      this.undoRedoService.executeCommand(batchCommand);
+
+      console.log(`✅ Batch command executed - all devices cleared`);
+    } catch (error) {
+      console.error('❌ Error clearing devices via batch command:', error);
+    }
+  }
+
+  /**
+   * Create batch remove command helper method
+   */
+  private createBatchRemoveCommand(commands: any[], description: string): any {
+    return {
+      id: IdUtils.generateUUID(),
+      type: 'batch_operation',
+      description,
+      timestamp: new Date(),
+
+      canExecute: () => true,
+
+      execute: () => {
+        console.log(`📦 Executing batch: ${commands.length} remove commands`);
+        commands.forEach((cmd, index) => {
+          console.log(`  🗑️ Removing device ${index + 1}/${commands.length}`);
+          cmd.execute();
+        });
+        return { success: true, message: 'Batch executed' };
+      },
+
+      undo: () => {
+        console.log(`↩️ Undoing batch: ${commands.length} remove commands (reverse order)`);
+        // Undo в обратен ред
+        for (let i = commands.length - 1; i >= 0; i--) {
+          console.log(`  ↩️ Restoring device ${commands.length - i}/${commands.length}`);
+          commands[i].undo();
+        }
+        return { success: true, message: 'Batch undone' };
+      },
+
+      redo: () => {
+        console.log(`↪️ Redoing batch: ${commands.length} remove commands`);
+        commands.forEach((cmd, index) => {
+          console.log(`  🗑️ Re-removing device ${index + 1}/${commands.length}`);
+          cmd.redo();
+        });
+        return { success: true, message: 'Batch redone' };
+      }
+    };
+  }
+
+  // === TEST: MANUAL BATCHING ===
+
+  testManualBatching(): void {
+    console.log('🧪 Testing manual batching...');
+
+    this.undoRedoService.startBatch('Manual batch test');
+
+    // Добави няколко devices с delay
+    setTimeout(() => {
+      this.addTypedDevice(DeviceType.ROUTER);
+    }, 500);
+
+    setTimeout(() => {
+      this.addTypedDevice(DeviceType.SWITCH);
+    }, 1000);
+
+    setTimeout(() => {
+      this.addTypedDevice(DeviceType.SERVER);
+      this.undoRedoService.endBatch();
+      console.log('🧪 Manual batch completed');
+    }, 1500);
   }
 
   forceRefreshCanvas(): void {
@@ -906,22 +1128,27 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.stage.on('wheel', (e) => {
       e.evt.preventDefault();
 
+      const pointer = this.stage.getPointerPosition();
+      if (!pointer) return;
+
       const oldScale = this.stage.scaleX();
-      const pointer = this.stage.getPointerPosition()!;
 
-      const scaleBy = CANVAS_CONFIG.ZOOM.WHEEL_SENSITIVITY;
-      const newScale = e.evt.deltaY > 0 ? oldScale * scaleBy : oldScale / scaleBy;
-
-      this.stage.scale({ x: newScale, y: newScale });
-      this.zoomLevel = newScale;
-
-      const newPos = {
-        x: pointer.x - (pointer.x - this.stage.x()) * newScale / oldScale,
-        y: pointer.y - (pointer.y - this.stage.y()) * newScale / oldScale,
-      };
-
-      this.stage.position(newPos);
-      this.layer.batchDraw();
+      // ➕ НОВА ЛОГИКА: Използвай EditorStateService
+      if (e.evt.deltaY > 0) {
+        // Zoom out
+        const result = this.editorState.zoomOut(pointer);
+        if (result.success) {
+          const newZoom = this.editorState.getCurrentState().zoom.level;
+          this.applyZoomToStage(newZoom, pointer, oldScale);
+        }
+      } else {
+        // Zoom in
+        const result = this.editorState.zoomIn(pointer);
+        if (result.success) {
+          const newZoom = this.editorState.getCurrentState().zoom.level;
+          this.applyZoomToStage(newZoom, pointer, oldScale);
+        }
+      }
     });
   }
 
@@ -990,10 +1217,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       : CanvasMode.SELECT;
   }
 
-  getZoomPercentage(): number {
-    return Math.round(this.zoomLevel * 100);
-  }
-
   private handleResize(): void {
     if (!this.stage || !this.canvasContainer) return;
 
@@ -1004,5 +1227,23 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     });
     this.drawGrid();
     this.layer.batchDraw();
+  }
+
+  /**
+ * Apply zoom to Konva stage with proper positioning
+ */
+  private applyZoomToStage(newScale: number, pointer: Point, oldScale: number): void {
+    this.stage.scale({ x: newScale, y: newScale });
+
+    const newPos = {
+      x: pointer.x - (pointer.x - this.stage.x()) * newScale / oldScale,
+      y: pointer.y - (pointer.y - this.stage.y()) * newScale / oldScale,
+    };
+
+    this.stage.position(newPos);
+    this.layer.batchDraw();
+
+    // ➕ SYNC: Update EditorStateService pan state
+    this.editorState.setPan(newPos);
   }
 }
