@@ -261,14 +261,17 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
           </mat-card-content>
         </mat-card>
 
-        <mat-card style="margin-bottom: 16px;">
+        <!-- Enhanced Device Library Panel -->
+        <mat-card style="margin-top: 16px;">
           <mat-card-header>
             <mat-card-title>Device Library</mat-card-title>
+            <mat-card-subtitle>{{ (deviceLibrary.searchResults$ | async)?.length || 0 }} devices available</mat-card-subtitle>
           </mat-card-header>
           <mat-card-content style="margin-top: 16px;">
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-
-              <!-- Quick Search -->
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+              
+              <!-- Search Box -->
+              <!-- Search Box - ПОПРАВЕНА ВЕРСИЯ -->
               <div>
                 <mat-form-field appearance="outline" style="width: 100%;">
                   <mat-label>Search devices...</mat-label>
@@ -276,32 +279,144 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
                     matInput 
                     [(ngModel)]="searchQuery"
                     (input)="onSearchQueryChange($event)"
-                    placeholder="Type device name or category">
-                  <mat-icon matSuffix>search</mat-icon>
+                    placeholder="Router, switch, server...">
+                  
+                  <!-- Search icon - показва се само когато няма текст -->
+                  <mat-icon 
+                    matSuffix 
+                    *ngIf="!searchQuery || searchQuery.length === 0">
+                    search
+                  </mat-icon>
+                  
+                  <!-- Clear icon - показва се само когато има текст -->
+                  <button 
+                    matSuffix 
+                    mat-icon-button 
+                    *ngIf="searchQuery && searchQuery.length > 0"
+                    (click)="clearDeviceSearch()"
+                    title="Clear search">
+                    <mat-icon>clear</mat-icon>
+                  </button>
                 </mat-form-field>
               </div>
-              
-              <button 
-                mat-raised-button 
-                color="primary" 
-                (click)="addTypedDevice(DeviceType.ROUTER)"
-                [disabled]="!(projectState.hasActiveProject$ | async)">
-                {{ DEVICE_CONFIG[DeviceType.ROUTER].icon }} Router
-              </button>
-              <button 
-                mat-raised-button 
-                color="primary" 
-                (click)="addTypedDevice(DeviceType.SWITCH)"
-                [disabled]="!(projectState.hasActiveProject$ | async)">
-                {{ DEVICE_CONFIG[DeviceType.SWITCH].icon }} Switch
-              </button>
-              <button 
-                mat-raised-button 
-                color="primary" 
-                (click)="addTypedDevice(DeviceType.SERVER)"
-                [disabled]="!(projectState.hasActiveProject$ | async)">
-                {{ DEVICE_CONFIG[DeviceType.SERVER].icon }} Server
-              </button>
+
+              <!-- Quick Filters -->
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button 
+                  mat-stroked-button 
+                  [color]="showFavoritesOnly ? 'accent' : 'basic'"
+                  (click)="toggleFavoritesFilter()"
+                  style="font-size: 11px;">
+                  <mat-icon style="font-size: 16px;">{{ showFavoritesOnly ? 'star' : 'star_border' }}</mat-icon>
+                  Favorites
+                </button>
+                <button 
+                  mat-stroked-button 
+                  [color]="showRecentOnly ? 'accent' : 'basic'"
+                  (click)="toggleRecentFilter()"
+                  style="font-size: 11px;">
+                  <mat-icon style="font-size: 16px;">history</mat-icon>
+                  Recent
+                </button>
+                <button 
+                  mat-stroked-button 
+                  (click)="clearAllFilters()"
+                  [disabled]="!(deviceLibrary.hasActiveFilters$ | async)"
+                  style="font-size: 11px;">
+                  <mat-icon style="font-size: 16px;">clear_all</mat-icon>
+                  Clear
+                </button>
+              </div>
+
+              <!-- Category Buttons -->
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="font-weight: 500; color: #666; font-size: 12px;">NETWORK DEVICES</div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.ROUTER)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    🔀 Router
+                  </button>
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.SWITCH)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    🔗 Switch
+                  </button>
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.ACCESS_POINT)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    📡 WiFi AP
+                  </button>
+                </div>
+
+                <div style="font-weight: 500; color: #666; font-size: 12px; margin-top: 8px;">SERVERS & COMPUTERS</div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.SERVER)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    🖥️ Server
+                  </button>
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.DESKTOP)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    💻 Desktop
+                  </button>
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.LAPTOP)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    💻 Laptop
+                  </button>
+                </div>
+
+                <div style="font-weight: 500; color: #666; font-size: 12px; margin-top: 8px;">PERIPHERALS</div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.PRINTER)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    🖨️ Printer
+                  </button>
+                  <button 
+                    mat-raised-button 
+                    color="primary" 
+                    (click)="addTypedDevice(DeviceType.STORAGE)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="font-size: 11px;">
+                    💾 Storage
+                  </button>
+                </div>
+              </div>
+
+              <!-- Library Analytics Button -->
+              <div style="margin-top: 8px;">
+                <button 
+                  mat-stroked-button 
+                  (click)="getLibraryAnalytics()"
+                  style="width: 100%; font-size: 11px;">
+                  <mat-icon style="font-size: 16px;">analytics</mat-icon>
+                  Show Library Analytics
+                </button>
+              </div>
             </div>
           </mat-card-content>
         </mat-card>
@@ -364,6 +479,17 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
               <div><strong>Recent:</strong> {{ (deviceLibrary.recentTemplates$ | async)?.length || 0 }}</div>
               <div><strong>Has Filters:</strong> {{ (deviceLibrary.hasActiveFilters$ | async) ? '🔧 Yes' : '❌ No' }}</div>
               <div><strong>Loading:</strong> {{ (deviceLibrary.isLoading$ | async) ? '🔄 Yes' : '✅ No' }}</div>
+
+              <div style="margin-top: 8px;">
+                <button 
+                  mat-stroked-button 
+                  color="accent"
+                  (click)="testFavorites()"
+                  style="font-size: 10px; padding: 2px 8px;">
+                  🧪 Test Favorites
+                </button>
+              </div>
+
             </div>
           </mat-card-content>
         </mat-card>
@@ -1077,8 +1203,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   // === NEW: DEVICE LIBRARY METHODS ===
 
+  // === NEW: FILTER STATE ===
+
   /** Current search query */
   searchQuery: string = '';
+
+  /** Show favorites only filter */
+  showFavoritesOnly: boolean = false;
+
+  /** Show recent only filter */
+  showRecentOnly: boolean = false;
+
+  /** Selected device category filter */
+  selectedCategory: string | null = null;
+
+  // === ENHANCED: DEVICE LIBRARY METHODS ===
 
   /**
    * Handle search query changes
@@ -1094,40 +1233,124 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   /**
-   * Clear search and filters
+   * Toggle favorites only filter
    */
-  clearDeviceSearch(): void {
-    this.searchQuery = '';
-    this.deviceLibrary.clearFilters();
-    console.log('🧹 Device search cleared');
+  toggleFavoritesFilter(): void {
+    this.showFavoritesOnly = !this.showFavoritesOnly;
+
+    // If turning on favorites, turn off recent
+    if (this.showFavoritesOnly) {
+      this.showRecentOnly = false;
+    }
+
+    this.deviceLibrary.updateFilter({
+      showFavoritesOnly: this.showFavoritesOnly,
+      showRecentOnly: this.showRecentOnly
+    });
+
+    console.log(`⭐ Favorites filter: ${this.showFavoritesOnly ? 'ON' : 'OFF'}`);
   }
 
   /**
-   * Add template to favorites
+   * Toggle recent only filter
+   */
+  toggleRecentFilter(): void {
+    this.showRecentOnly = !this.showRecentOnly;
+
+    // If turning on recent, turn off favorites
+    if (this.showRecentOnly) {
+      this.showFavoritesOnly = false;
+    }
+
+    this.deviceLibrary.updateFilter({
+      showFavoritesOnly: this.showFavoritesOnly,
+      showRecentOnly: this.showRecentOnly
+    });
+
+    console.log(`🕒 Recent filter: ${this.showRecentOnly ? 'ON' : 'OFF'}`);
+  }
+
+  /**
+   * Clear all filters and search
+   */
+  clearAllFilters(): void {
+    this.searchQuery = '';
+    this.showFavoritesOnly = false;
+    this.showRecentOnly = false;
+    this.selectedCategory = null;
+
+    this.deviceLibrary.clearFilters();
+    console.log('🧹 All filters cleared');
+  }
+
+  /**
+   * Clear device search only
+   */
+  clearDeviceSearch(): void {
+    this.searchQuery = '';
+    this.deviceLibrary.quickSearch('');
+    console.log('🧹 Search query cleared');
+  }
+
+  /**
+   * Add template to favorites (enhanced with UI feedback)
    */
   addTemplateToFavorites(templateId: string): void {
     const success = this.deviceLibrary.addToFavorites(templateId);
     if (success) {
       console.log('⭐ Template added to favorites');
+      // Could add snackbar notification here
     }
   }
 
   /**
-   * Remove template from favorites  
+   * Remove template from favorites (enhanced with UI feedback)
    */
   removeTemplateFromFavorites(templateId: string): void {
     const success = this.deviceLibrary.removeFromFavorites(templateId);
     if (success) {
       console.log('💔 Template removed from favorites');
+      // Could add snackbar notification here
     }
   }
 
   /**
-   * Get device library analytics
+   * Get and display library analytics
    */
   getLibraryAnalytics(): void {
     const analytics = this.deviceLibrary.getAnalytics();
-    console.log('📊 Device Library Analytics:', analytics);
+    console.log('📊 Device Library Analytics:');
+    console.log(`  📚 Total Templates: ${analytics.totalTemplates}`);
+    console.log(`  📂 By Category:`, analytics.templatesByCategory);
+    console.log(`  🔥 Most Popular:`, analytics.mostPopularTemplates.map(t => t.name));
+    console.log(`  🆕 Recently Added:`, analytics.recentlyAddedTemplates.map(t => t.name));
+    console.log(`  📈 Category Usage:`, analytics.categoryUsage);
+  }
+
+  /**
+   * Test favorites functionality
+   */
+  testFavorites(): void {
+    console.log('🧪 Testing favorites functionality...');
+
+    // Get first few templates
+    const templates = this.deviceLibrary.getTemplates();
+    const testTemplates = templates.slice(0, 3);
+
+    testTemplates.forEach((template, index) => {
+      setTimeout(() => {
+        console.log(`⭐ Adding template ${index + 1} to favorites: ${template.name}`);
+        this.addTemplateToFavorites(template.id);
+      }, index * 500);
+    });
+
+    // Remove one after a delay
+    setTimeout(() => {
+      if (testTemplates.length > 0) {
+        console.log(`💔 Removing template from favorites: ${testTemplates[0].name}`);
+        this.removeTemplateFromFavorites(testTemplates[0].id);
+      }
+    }, 2000);
   }
 
   /**
