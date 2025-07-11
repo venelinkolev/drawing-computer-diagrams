@@ -518,6 +518,53 @@ export class UndoRedoService {
         };
     }
 
+    /**
+     * Create pan command
+     */
+    /**
+ * Create pan command with Konva stage sync
+ */
+    /**
+ * Create pan command (simplified - auto-sync handles Konva updates)
+ */
+    public createPanCommand(
+        newPosition: Point,
+        previousPosition: Point,
+        editorStateService: any
+    ): Command {
+        const data: CanvasCommandData = {
+            panPosition: newPosition,
+            previousPanPosition: previousPosition
+        };
+
+        return {
+            id: IdUtils.generateUUID(),
+            type: CommandType.PAN_CHANGE,
+            description: `Pan to (${Math.round(newPosition.x)}, ${Math.round(newPosition.y)})`,
+            timestamp: new Date(),
+
+            canExecute: () => true,
+
+            execute: () => {
+                editorStateService.setPan(newPosition);
+                // Auto-sync will handle Konva stage update
+                return { success: true, message: 'Pan applied' };
+            },
+
+            undo: () => {
+                editorStateService.setPan(previousPosition);
+                // Auto-sync will handle Konva stage update
+                return { success: true, message: 'Pan undone' };
+            },
+
+            redo: () => {
+                editorStateService.setPan(newPosition);
+                // Auto-sync will handle Konva stage update
+                return { success: true, message: 'Pan reapplied' };
+            }
+        };
+    }
+
     // === PRIVATE HELPER METHODS ===
 
     private addToHistory(command: Command): void {

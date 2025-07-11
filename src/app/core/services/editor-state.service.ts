@@ -479,6 +479,505 @@ export class EditorStateService {
         return this.setPan(centerPosition);
     }
 
+    // === ENHANCED PAN MANAGEMENT ===
+
+    /**
+     * Set pan position with undo/redo support
+     */
+    public setPanWithHistory(
+        position: Point,
+        description: string = 'Pan canvas',
+        undoRedoService?: any
+    ): CanvasOperationResult {
+        try {
+            const currentPan = this._pan$.value;
+            const previousPosition = { ...currentPan.position };
+
+            // Apply constraints if they exist
+            let constrainedPosition = position;
+            if (currentPan.constraints) {
+                constrainedPosition = {
+                    x: MathUtils.clamp(position.x, currentPan.constraints.minX, currentPan.constraints.maxX),
+                    y: MathUtils.clamp(position.y, currentPan.constraints.minY, currentPan.constraints.maxY)
+                };
+            }
+
+            // Create undo/redo command if service provided
+            if (undoRedoService && !this.isPositionEqual(previousPosition, constrainedPosition)) {
+                const panCommand = undoRedoService.createPanCommand(
+                    constrainedPosition,
+                    previousPosition,
+                    this
+                );
+                undoRedoService.executeCommand(panCommand);
+            } else {
+                // Direct update without undo/redo
+                this.setPan(constrainedPosition);
+            }
+
+            console.log(`🖐️ EditorStateService: Pan with history to (${constrainedPosition.x}, ${constrainedPosition.y})`);
+
+            return {
+                success: true,
+                message: `Pan updated`,
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to set pan with history', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to set pan with history',
+                timestamp: new Date()
+            };
+        }
+    }
+    /**
+     * Start drag-to-pan operation
+     */
+    public startDragPan(startPosition: Point): CanvasOperationResult {
+        try {
+            const currentPan = this._pan$.value;
+            const currentInteraction = this._interaction$.value;
+
+            const updatedPan: PanState = {
+                ...currentPan,
+                isPanning: true,
+                startPosition
+            };
+
+            const updatedInteraction: InteractionState = {
+                ...currentInteraction,
+                activeGesture: CanvasGesture.PAN,
+                isMouseDown: true
+            };
+
+            this._pan$.next(updatedPan);
+            this._interaction$.next(updatedInteraction);
+            this._cursor$.next(CanvasCursor.GRABBING);
+
+            console.log('🖐️ EditorStateService: Drag pan started at', startPosition);
+
+            return {
+                success: true,
+                message: 'Drag pan started',
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to start drag pan', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to start drag pan',
+                timestamp: new Date()
+            };
+        }
+    }
+
+    /**
+     * Update drag-to-pan during mouse move
+     */
+    public updateDragPan(currentPosition: Point): CanvasOperationResult {
+        try {
+            const panState = this._pan$.value;
+
+            if (!panState.isPanning || !panState.startPosition) {
+                return { success: false, message: 'Drag pan not active', timestamp: new Date() };
+            }
+
+            const deltaX = currentPosition.x - panState.startPosition.x;
+            const deltaY = currentPosition.y - panState.startPosition.y;
+
+            const newPosition: Point = {
+                x: panState.position.x + deltaX,
+                y: panState.position.y + deltaY
+            };
+
+            // Apply constraints if they exist
+            let constrainedPosition = newPosition;
+            if (panState.constraints) {
+                constrainedPosition = {
+                    x: MathUtils.clamp(newPosition.x, panState.constraints.minX, panState.constraints.maxX),
+                    y: MathUtils.clamp(newPosition.y, panState.constraints.minY, panState.constraints.maxY)
+                };
+            }
+
+            const updatedPan: PanState = {
+                ...panState,
+                position: constrainedPosition,
+                startPosition: currentPosition // Update start position for smooth dragging
+            };
+
+            this._pan$.next(updatedPan);
+
+            return {
+                success: true,
+                message: 'Drag pan updated',
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to update drag pan', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to update drag pan',
+                timestamp: new Date()
+            };
+        }
+    }
+
+    /**
+     * End drag-to-pan operation with undo/redo support
+     */
+    public endDragPan(
+        finalPosition: Point,
+        originalPosition: Point,
+        undoRedoService?: any
+    ): CanvasOperationResult {
+        try {
+            const currentPan = this._pan$.value;
+            const currentInteraction = this._interaction$.value;
+
+            const updatedPan: PanState = {
+                ...currentPan,
+                isPanning: false,
+                startPosition: undefined
+            };
+
+            const updatedInteraction: InteractionState = {
+                ...currentInteraction,
+                activeGesture: CanvasGesture.NONE,
+                isMouseDown: false
+            };
+
+            this._pan$.next(updatedPan);
+            this._interaction$.next(updatedInteraction);
+
+            // Update cursor based on current mode
+            this.updateCursorForMode(currentInteraction.mode);
+
+            // Create undo/redo command if service provided and position changed significantly
+            if (undoRedoService && !this.isPositionEqual(originalPosition, finalPosition)) {
+                const panCommand = undoRedoService.createPanCommand(
+                    finalPosition,
+                    originalPosition,
+                    this
+                );
+                undoRedoService.executeCommand(panCommand);
+            }
+
+            console.log('🖐️ EditorStateService: Drag pan ended');
+
+            return {
+                success: true,
+                message: 'Drag pan ended',
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to end drag pan', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to end drag pan',
+                timestamp: new Date()
+            };
+        }
+    }
+
+    /**
+     * Set pan constraints (boundary limits)
+     */
+    public setPanConstraints(constraints: {
+        minX: number;
+        maxX: number;
+        minY: number;
+        maxY: number;
+    }): CanvasOperationResult {
+        try {
+            const currentPan = this._pan$.value;
+
+            const updatedPan: PanState = {
+                ...currentPan,
+                constraints
+            };
+
+            this._pan$.next(updatedPan);
+
+            console.log('🔒 EditorStateService: Pan constraints set', constraints);
+
+            return {
+                success: true,
+                message: 'Pan constraints set',
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to set pan constraints', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to set pan constraints',
+                timestamp: new Date()
+            };
+        }
+    }
+
+    /**
+     * Clear pan constraints
+     */
+    public clearPanConstraints(): CanvasOperationResult {
+        try {
+            const currentPan = this._pan$.value;
+
+            const updatedPan: PanState = {
+                ...currentPan,
+                constraints: undefined
+            };
+
+            this._pan$.next(updatedPan);
+
+            console.log('🔓 EditorStateService: Pan constraints cleared');
+
+            return {
+                success: true,
+                message: 'Pan constraints cleared',
+                timestamp: new Date()
+            };
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to clear pan constraints', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to clear pan constraints',
+                timestamp: new Date()
+            };
+        }
+    }
+
+    /**
+     * Animate pan to position
+     */
+    /**
+  * Animate pan to position with Konva stage sync
+  */
+    /**
+  * Animate pan to position with Konva stage sync
+  */
+    public animatePanTo(
+        targetPosition: Point,
+        duration: number = 300,
+        easing: 'linear' | 'easeInOut' = 'easeInOut',
+        konvaStage?: any,
+        konvaLayer?: any
+    ): Promise<CanvasOperationResult> {
+        return new Promise((resolve) => {
+            try {
+                const currentPan = this._pan$.value;
+                const startPosition = { ...currentPan.position };
+                const startTime = performance.now();
+
+                console.log(`🎬 Starting pan animation from (${startPosition.x}, ${startPosition.y}) to (${targetPosition.x}, ${targetPosition.y})`);
+
+                const animate = (currentTime: number) => {
+                    const elapsed = currentTime - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+
+                    // Apply easing
+                    let easedProgress = progress;
+                    if (easing === 'easeInOut') {
+                        easedProgress = progress < 0.5
+                            ? 2 * progress * progress
+                            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                    }
+
+                    const currentPosition: Point = {
+                        x: startPosition.x + (targetPosition.x - startPosition.x) * easedProgress,
+                        y: startPosition.y + (targetPosition.y - startPosition.y) * easedProgress
+                    };
+
+                    // Update EditorStateService (auto-sync ще обнови Konva за non-animation updates)
+                    this.setPan(currentPosition);
+
+                    // ➕ DIRECT UPDATE: За smooth animation все пак трябва direct Konva update
+                    if (konvaStage && konvaLayer) {
+                        konvaStage.position(currentPosition);
+                        konvaLayer.batchDraw();
+                    }
+
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        console.log('✅ EditorStateService: Pan animation completed');
+                        resolve({
+                            success: true,
+                            message: 'Pan animation completed',
+                            timestamp: new Date()
+                        });
+                    }
+                };
+
+                requestAnimationFrame(animate);
+
+            } catch (error) {
+                console.error('❌ EditorStateService: Failed to animate pan', error);
+                resolve({
+                    success: false,
+                    error: error as Error,
+                    message: 'Failed to animate pan',
+                    timestamp: new Date()
+                });
+            }
+        });
+    }
+    /**
+     * Get optimal pan position to center content
+     */
+    public getOptimalPanPosition(contentBounds: {
+        minX: number;
+        maxX: number;
+        minY: number;
+        maxY: number;
+    }): Point {
+        const viewport = this._viewport$.value;
+        const zoom = this._zoom$.value;
+
+        const contentWidth = contentBounds.maxX - contentBounds.minX;
+        const contentHeight = contentBounds.maxY - contentBounds.minY;
+        const contentCenterX = contentBounds.minX + contentWidth / 2;
+        const contentCenterY = contentBounds.minY + contentHeight / 2;
+
+        // Calculate position to center content in viewport
+        const optimalX = (viewport.width / 2) - (contentCenterX * zoom.level);
+        const optimalY = (viewport.height / 2) - (contentCenterY * zoom.level);
+
+        return { x: optimalX, y: optimalY };
+    }
+
+    // === KEYBOARD SUPPORT ===
+
+    /**
+     * Handle keyboard shortcuts for pan operations
+     */
+    public handleKeyboardShortcut(
+        key: string,
+        modifiers: { ctrl: boolean; shift: boolean; alt: boolean }
+    ): CanvasOperationResult {
+        try {
+            const currentInteraction = this._interaction$.value;
+
+            switch (key.toLowerCase()) {
+                case 'space':
+                    if (currentInteraction.mode !== CanvasMode.PAN) {
+                        return this.setMode(CanvasMode.PAN);
+                    }
+                    break;
+
+                case 'escape':
+                    if (currentInteraction.mode === CanvasMode.PAN) {
+                        return this.setMode(CanvasMode.SELECT);
+                    }
+                    // Reset pan position on Escape
+                    return this.setPan({ x: 0, y: 0 });
+
+                case 'home':
+                    // Center and reset zoom
+                    this.resetZoom();
+                    return this.setPan({ x: 0, y: 0 });
+
+                case 'arrowup':
+                    if (modifiers.shift) {
+                        const currentPan = this._pan$.value;
+                        const step = modifiers.ctrl ? 50 : 10;
+                        return this.setPan({ x: currentPan.position.x, y: currentPan.position.y - step });
+                    }
+                    break;
+
+                case 'arrowdown':
+                    if (modifiers.shift) {
+                        const currentPan = this._pan$.value;
+                        const step = modifiers.ctrl ? 50 : 10;
+                        return this.setPan({ x: currentPan.position.x, y: currentPan.position.y + step });
+                    }
+                    break;
+
+                case 'arrowleft':
+                    if (modifiers.shift) {
+                        const currentPan = this._pan$.value;
+                        const step = modifiers.ctrl ? 50 : 10;
+                        return this.setPan({ x: currentPan.position.x - step, y: currentPan.position.y });
+                    }
+                    break;
+
+                case 'arrowright':
+                    if (modifiers.shift) {
+                        const currentPan = this._pan$.value;
+                        const step = modifiers.ctrl ? 50 : 10;
+                        return this.setPan({ x: currentPan.position.x + step, y: currentPan.position.y });
+                    }
+                    break;
+            }
+
+            return {
+                success: false,
+                message: 'Keyboard shortcut not recognized',
+                timestamp: new Date()
+            };
+
+        } catch (error) {
+            console.error('❌ EditorStateService: Failed to handle keyboard shortcut', error);
+            return {
+                success: false,
+                error: error as Error,
+                message: 'Failed to handle keyboard shortcut',
+                timestamp: new Date()
+            };
+        }
+    }
+
+    // === HELPER METHODS ===
+
+    /**
+     * Check if two positions are equal (with small tolerance)
+     */
+    private isPositionEqual(pos1: Point, pos2: Point, tolerance: number = 1): boolean {
+        return Math.abs(pos1.x - pos2.x) < tolerance && Math.abs(pos1.y - pos2.y) < tolerance;
+    }
+
+    /**
+     * Get pan state information for debugging
+     */
+    public getPanDebugInfo(): {
+        position: Point;
+        isPanning: boolean;
+        hasConstraints: boolean;
+        constraints?: any;
+        canPanUp: boolean;
+        canPanDown: boolean;
+        canPanLeft: boolean;
+        canPanRight: boolean;
+    } {
+        const panState = this._pan$.value;
+
+        let canPanUp = true, canPanDown = true, canPanLeft = true, canPanRight = true;
+
+        if (panState.constraints) {
+            canPanUp = panState.position.y > panState.constraints.minY;
+            canPanDown = panState.position.y < panState.constraints.maxY;
+            canPanLeft = panState.position.x > panState.constraints.minX;
+            canPanRight = panState.position.x < panState.constraints.maxX;
+        }
+
+        return {
+            position: { ...panState.position },
+            isPanning: panState.isPanning,
+            hasConstraints: !!panState.constraints,
+            constraints: panState.constraints,
+            canPanUp,
+            canPanDown,
+            canPanLeft,
+            canPanRight
+        };
+    }
+
     // === MODE AND TOOL MANAGEMENT ===
 
     /**

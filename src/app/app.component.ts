@@ -213,6 +213,43 @@ import { UndoRedoService } from '@core/services/undo-redo.service';
                 Test Manual Batching
                 </button>
               </div>
+
+              <!-- Enhanced Pan Controls -->
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  mat-stroked-button 
+                  (click)="animatePanToCenter()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>my_location</mat-icon>
+                  Animate Center
+                </button>
+                <button 
+                  mat-stroked-button 
+                  (click)="resetPanPosition()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>home</mat-icon>
+                  Reset Pan
+                </button>
+              </div>
+
+              <!-- Pan Constraints Toggle -->
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  mat-stroked-button 
+                  color="warn"
+                  (click)="updatePanConstraints()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>lock</mat-icon>
+                  Set Bounds
+                </button>
+                <button 
+                  mat-stroked-button 
+                  (click)="editorState.clearPanConstraints()"
+                  [disabled]="!(editorState.isInitialized$ | async)">
+                  <mat-icon>lock_open</mat-icon>
+                  Clear Bounds
+                </button>
+              </div>
             </div>
           </mat-card-content>
         </mat-card>
@@ -558,6 +595,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.destroy$.next();
     this.destroy$.complete();
 
+    if (this.keyboardHandlers) {
+      window.removeEventListener('keydown', this.keyboardHandlers.handleKeyDown);
+      window.removeEventListener('keyup', this.keyboardHandlers.handleKeyUp);
+    }
+
     if (this.stage) {
       this.stage.destroy();
     }
@@ -709,6 +751,114 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const currentState = this.undoRedoService.getHistoryState().isRecording;
     this.undoRedoService.setRecording(!currentState);
     console.log(`🎬 AppComponent: Undo recording ${!currentState ? 'enabled' : 'disabled'}`);
+  }
+
+  // === NEW: ENHANCED PAN SUPPORT ===
+
+  /**
+   * Enhanced pan with undo/redo support
+   */
+  panCanvasTo(position: Point, withHistory: boolean = true): void {
+    if (withHistory) {
+      // ➕ ОПРОСТЕНО: Само 3 параметъра
+      const result = this.editorState.setPanWithHistory(
+        position,
+        `Pan canvas to (${Math.round(position.x)}, ${Math.round(position.y)})`,
+        this.undoRedoService
+      );
+
+      if (result.success) {
+        console.log(`🖐️ Canvas panned with history to:`, position);
+        // Auto-sync ще обнови Konva stage-а автоматично
+      }
+    } else {
+      const result = this.editorState.setPan(position);
+      if (result.success) {
+        console.log(`🖐️ Canvas panned without history to:`, position);
+        // Auto-sync ще обнови Konva stage-а автоматично
+      }
+    }
+  }
+  /**
+   * Animate pan to center
+   */
+  async animatePanToCenter(): Promise<void> {
+    const viewport = this.editorState.getCurrentState().viewport;
+    const centerPosition: Point = {
+      x: viewport.width / 2 - 400, // Assuming content center around (400, 300)
+      y: viewport.height / 2 - 300
+    };
+
+    console.log('🎬 Starting pan animation to center...');
+
+    // ➕ ОПРОСТЕНА ВЕРСИЯ: Auto-sync ще се погрижи за Konva updates
+    const result = await this.editorState.animatePanTo(
+      centerPosition,
+      500,
+      'easeInOut',
+      this.stage,  // Animacията все още се нуждае от stage/layer за smooth updates
+      this.layer
+    );
+
+    if (result.success) {
+      // ➕ ОПРОСТЕНО: Само 3 параметъра - auto-sync ще обнови Konva stage-а
+      this.editorState.setPanWithHistory(
+        centerPosition,
+        'Animate pan to center',
+        this.undoRedoService
+      );
+
+      console.log('✅ Pan animation completed with undo/redo support');
+    }
+  }
+
+  /**
+   * Reset pan position with undo/redo
+   */
+  resetPanPosition(): void {
+    const resetPosition: Point = { x: 0, y: 0 };
+    this.panCanvasTo(resetPosition, true);
+  }
+
+  /**
+   * Set pan constraints based on canvas content
+   */
+  updatePanConstraints(): void {
+    const viewport = this.editorState.getCurrentState().viewport;
+    const project = this.projectState.getCurrentProject();
+
+    if (!project || project.devices.length === 0) {
+      this.editorState.clearPanConstraints();
+      return;
+    }
+
+    // Calculate content bounds
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+    project.devices.forEach(device => {
+      minX = Math.min(minX, device.position.x - device.size.width / 2);
+      maxX = Math.max(maxX, device.position.x + device.size.width / 2);
+      minY = Math.min(minY, device.position.y - device.size.height / 2);
+      maxY = Math.max(maxY, device.position.y + device.size.height / 2);
+    });
+
+    // Add padding
+    const padding = 200;
+    minX -= padding;
+    maxX += padding;
+    minY -= padding;
+    maxY += padding;
+
+    // Set constraints to keep content visible
+    const constraints = {
+      minX: viewport.width - maxX,
+      maxX: -minX,
+      minY: viewport.height - maxY,
+      maxY: -minY
+    };
+
+    this.editorState.setPanConstraints(constraints);
+    console.log('🔒 Pan constraints updated based on content bounds');
   }
 
   // === PROJECT ACTIONS ===
@@ -968,6 +1118,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.drawGrid();
     this.addZoomSupport();
     this.addSelectionHandling();
+    this.addKeyboardSupport();
+    this.addCursorSupport();
+    this.addEditorStateSync();
 
     // NEW: Initialize EditorStateService with canvas dimensions
     this.editorState.initializeEditor(container.offsetWidth, container.offsetHeight);
@@ -1153,21 +1306,213 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   private addSelectionHandling(): void {
-    this.stage.on('click', (e) => {
-      console.log('🖱️ Canvas clicked, target:', e.target.constructor.name);
+    let dragStartPosition: Point | null = null;
+    let originalPanPosition: Point | null = null;
+    let isDragging = false;
 
-      if (e.target === this.stage) {
-        console.log('🔄 Clicked on stage - clearing selection');
-        this.clearSelection();
-        return;
-      }
+    // Mouse down event
+    this.stage.on('mousedown touchstart', (e) => {
+      const editorState = this.editorState.getCurrentState();
+      const pointer = this.stage.getPointerPosition();
+      if (!pointer) return;
 
-      if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
-        console.log('🎯 Clicked on shape - selecting');
-        this.selectShape(e.target as Konva.Shape);
+      dragStartPosition = { ...pointer };
+      isDragging = false;
+
+      console.log(`🖱️ Mouse down at (${pointer.x}, ${pointer.y}) - Mode: ${editorState.interaction.mode}`);
+
+      if (editorState.interaction.mode === CanvasMode.PAN) {
+        // Start pan operation
+        originalPanPosition = { ...editorState.pan.position };
+        this.editorState.startDragPan(pointer);
+        console.log('🖐️ Pan drag started');
+      } else if (editorState.interaction.mode === CanvasMode.SELECT) {
+        // Handle selection logic (existing code)
+        if (e.target === this.stage) {
+          console.log('🔄 Clicked on stage - preparing for potential selection clear');
+        } else if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
+          console.log('🎯 Clicked on shape - preparing for selection');
+        }
       }
     });
+
+    // Mouse move event
+    this.stage.on('mousemove touchmove', (e) => {
+      const pointer = this.stage.getPointerPosition();
+      if (!pointer || !dragStartPosition) return;
+
+      const editorState = this.editorState.getCurrentState();
+
+      // Calculate drag distance to determine if we're dragging
+      const dragDistance = Math.sqrt(
+        Math.pow(pointer.x - dragStartPosition.x, 2) +
+        Math.pow(pointer.y - dragStartPosition.y, 2)
+      );
+
+      if (dragDistance > 5 && !isDragging) {
+        isDragging = true;
+        console.log('🚀 Drag threshold exceeded - starting drag operation');
+      }
+
+      if (isDragging && editorState.interaction.mode === CanvasMode.PAN) {
+        // Update pan position
+        this.editorState.updateDragPan(pointer);
+
+        // Apply to Konva stage immediately for smooth dragging
+        const currentPan = this.editorState.getCurrentState().pan;
+        this.stage.position(currentPan.position);
+        this.layer.batchDraw();
+      }
+    });
+
+    // Mouse up event
+    this.stage.on('mouseup touchend', (e) => {
+      const pointer = this.stage.getPointerPosition();
+      if (!pointer || !dragStartPosition) return;
+
+      const editorState = this.editorState.getCurrentState();
+
+      console.log(`🖱️ Mouse up at (${pointer.x}, ${pointer.y}) - Was dragging: ${isDragging}`);
+
+      if (editorState.interaction.mode === CanvasMode.PAN && isDragging && originalPanPosition) {
+        // End pan operation with undo/redo support
+        const finalPosition = { ...editorState.pan.position };
+        this.editorState.endDragPan(finalPosition, originalPanPosition, this.undoRedoService);
+        console.log('🖐️ Pan drag ended with undo/redo support');
+      } else if (editorState.interaction.mode === CanvasMode.SELECT && !isDragging) {
+        // Handle selection logic (existing code)
+        if (e.target === this.stage) {
+          console.log('🔄 Clicked on stage - clearing selection');
+          this.clearSelection();
+        } else if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
+          console.log('🎯 Clicked on shape - selecting');
+          this.selectShape(e.target as Konva.Shape);
+        }
+      }
+
+      // Reset drag state
+      dragStartPosition = null;
+      originalPanPosition = null;
+      isDragging = false;
+    });
+
+    // Prevent context menu on right click
+    this.stage.on('contextmenu', (e) => {
+      e.evt.preventDefault();
+    });
   }
+
+  private addKeyboardSupport(): void {
+    // Add keyboard event listeners to window
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const modifiers = {
+        ctrl: e.ctrlKey,
+        shift: e.shiftKey,
+        alt: e.altKey
+      };
+
+      console.log(`⌨️ Key pressed: ${e.key} with modifiers:`, modifiers);
+
+      // Handle keyboard shortcuts through EditorStateService
+      const result = this.editorState.handleKeyboardShortcut(e.key, modifiers);
+
+      if (result.success) {
+        e.preventDefault();
+
+        // Apply changes to Konva stage
+        const editorState = this.editorState.getCurrentState();
+
+        if (this.stage) {
+          this.stage.scale({ x: editorState.zoom.level, y: editorState.zoom.level });
+          this.stage.position(editorState.pan.position);
+          this.layer.batchDraw();
+        }
+
+        console.log('✅ Keyboard shortcut applied:', result.message);
+      }
+
+      // Handle undo/redo shortcuts
+      if (modifiers.ctrl && !modifiers.shift && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        this.undoLastAction();
+      } else if ((modifiers.ctrl && modifiers.shift && e.key.toLowerCase() === 'z') ||
+        (modifiers.ctrl && e.key.toLowerCase() === 'y')) {
+        e.preventDefault();
+        this.redoLastAction();
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      // Handle key up events if needed
+      if (e.key === ' ') {
+        // Space key released - could toggle back to select mode
+        console.log('🚀 Space key released');
+      }
+    };
+
+    // Add event listeners
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    // Store reference for cleanup
+    this.keyboardHandlers = { handleKeyDown, handleKeyUp };
+  }
+
+  private addCursorSupport(): void {
+    // Subscribe to cursor changes and apply to canvas container
+    this.editorState.cursor$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(cursor => {
+        if (this.canvasContainer?.nativeElement) {
+          this.canvasContainer.nativeElement.style.cursor = cursor;
+          console.log(`🎯 Cursor updated to: ${cursor}`);
+        }
+      });
+  }
+
+  private addEditorStateSync(): void {
+    // Auto-sync pan state changes to Konva stage
+    this.editorState.panState$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(panState => {
+        if (this.stage && this.layer) {
+          const currentPosition = this.stage.position();
+          const newPosition = panState.position;
+
+          // Only update if position actually changed to avoid unnecessary redraws
+          if (Math.abs(currentPosition.x - newPosition.x) > 0.1 ||
+            Math.abs(currentPosition.y - newPosition.y) > 0.1) {
+
+            this.stage.position(newPosition);
+            this.layer.batchDraw();
+            console.log(`🔄 Auto-synced Konva stage to pan position: (${newPosition.x}, ${newPosition.y})`);
+          }
+        }
+      });
+
+    // Auto-sync zoom state changes to Konva stage
+    this.editorState.zoomState$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(zoomState => {
+        if (this.stage && this.layer) {
+          const currentScale = this.stage.scaleX();
+          const newScale = zoomState.level;
+
+          // Only update if scale actually changed
+          if (Math.abs(currentScale - newScale) > 0.001) {
+            this.stage.scale({ x: newScale, y: newScale });
+            this.layer.batchDraw();
+            console.log(`🔍 Auto-synced Konva stage to zoom level: ${Math.round(newScale * 100)}%`);
+          }
+        }
+      });
+  }
+
+  // Add cleanup method for keyboard handlers
+  private keyboardHandlers?: {
+    handleKeyDown: (e: KeyboardEvent) => void;
+    handleKeyUp: (e: KeyboardEvent) => void;
+  };
 
   private selectShape(shape: Konva.Shape): void {
     this.clearSelection();
