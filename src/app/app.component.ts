@@ -10,6 +10,9 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatCardModule } from '@angular/material/card';
 import { MatBadgeModule } from '@angular/material/badge';
 import { MatChipsModule } from '@angular/material/chips';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { FormsModule } from '@angular/forms';
 
 // Pure Konva.js import
 import Konva from 'konva';
@@ -37,6 +40,7 @@ import {
 import { ProjectStateService } from '@core/services/project-state.service';
 import { EditorStateService } from '@core/services/editor-state.service';
 import { UndoRedoService } from '@core/services/undo-redo.service';
+import { DeviceLibraryService } from '@core/services/device-library.service';
 
 @Component({
   selector: 'app-root',
@@ -50,6 +54,9 @@ import { UndoRedoService } from '@core/services/undo-redo.service';
     MatCardModule,
     MatBadgeModule,
     MatChipsModule,
+    MatFormFieldModule,
+    MatInputModule,
+    FormsModule,
   ],
   template: `
     <mat-toolbar color="primary">
@@ -260,6 +267,20 @@ import { UndoRedoService } from '@core/services/undo-redo.service';
           </mat-card-header>
           <mat-card-content style="margin-top: 16px;">
             <div style="display: flex; flex-direction: column; gap: 8px;">
+
+              <!-- Quick Search -->
+              <div>
+                <mat-form-field appearance="outline" style="width: 100%;">
+                  <mat-label>Search devices...</mat-label>
+                  <input 
+                    matInput 
+                    [(ngModel)]="searchQuery"
+                    (input)="onSearchQueryChange($event)"
+                    placeholder="Type device name or category">
+                  <mat-icon matSuffix>search</mat-icon>
+                </mat-form-field>
+              </div>
+              
               <button 
                 mat-raised-button 
                 color="primary" 
@@ -327,6 +348,23 @@ import { UndoRedoService } from '@core/services/undo-redo.service';
                   Clear History
                 </button>
               </div>
+          </mat-card-content>
+        </mat-card>
+
+        <!-- NEW: Device Library State -->
+        <mat-card style="margin-top: 16px;">
+          <mat-card-header>
+            <mat-card-title>Device Library</mat-card-title>
+          </mat-card-header>
+          <mat-card-content style="margin-top: 16px;">
+            <div style="font-size: 12px; line-height: 1.6;">
+              <div><strong>Total Templates:</strong> {{ (deviceLibrary.templateCount$ | async) }}</div>
+              <div><strong>Search Results:</strong> {{ (deviceLibrary.searchResults$ | async)?.length || 0 }}</div>
+              <div><strong>Favorites:</strong> {{ (deviceLibrary.favoriteTemplates$ | async)?.length || 0 }}</div>
+              <div><strong>Recent:</strong> {{ (deviceLibrary.recentTemplates$ | async)?.length || 0 }}</div>
+              <div><strong>Has Filters:</strong> {{ (deviceLibrary.hasActiveFilters$ | async) ? '🔧 Yes' : '❌ No' }}</div>
+              <div><strong>Loading:</strong> {{ (deviceLibrary.isLoading$ | async) ? '🔄 Yes' : '✅ No' }}</div>
+            </div>
           </mat-card-content>
         </mat-card>
 
@@ -513,6 +551,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly projectState = inject(ProjectStateService);
   readonly editorState = inject(EditorStateService);
   readonly undoRedoService = inject(UndoRedoService);
+  readonly deviceLibrary = inject(DeviceLibraryService);
   private readonly cdr = inject(ChangeDetectorRef);
 
   // Expose imports for template
@@ -577,6 +616,25 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(size => {
         console.log(`📚 History size: ${size}`);
+      });
+
+    // NEW: Device Library state logging for debugging
+    this.deviceLibrary.templateCount$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(count => {
+        console.log(`📚 Device templates loaded: ${count}`);
+      });
+
+    this.deviceLibrary.searchResults$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(results => {
+        console.log(`🔍 Search results: ${results.length} templates`);
+      });
+
+    this.deviceLibrary.favoriteTemplates$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(favorites => {
+        console.log(`⭐ Favorite templates: ${favorites.length}`);
       });
   }
 
@@ -897,58 +955,62 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     console.log(`🔄 Auto-save ${!currentState ? 'enabled' : 'disabled'}`);
   }
 
-  // === DEVICE ACTIONS ===
+  // === DEVICE ACTIONS - METHODS ===
 
   addDevice(): void {
     this.addTypedDevice(DeviceType.ROUTER);
   }
 
   addTypedDevice(type: DeviceType): void {
-    const config = DEVICE_CONFIG[type];
-    if (!config) return;
-
     const project = this.projectState.getCurrentProject();
     if (!project) return;
 
-    const position: Point = {
-      x: Math.random() * 400 + 100,
-      y: Math.random() * 300 + 100
-    };
-
-    const device: Device = {
-      id: IdUtils.generateDeviceId(type),
-      type,
-      position: project.settings.snapToGrid
-        ? MathUtils.snapToGrid(position, project.settings.gridSize)
-        : position,
-      size: config.defaultSize,
-      rotation: 0,
-      metadata: {
-        name: `${type.charAt(0).toUpperCase() + type.slice(1)}_${project.devices.length + 1}`,
-        description: `${type} device created via Command Pattern`,  // ➕ ОБНОВЕНО ОПИСАНИЕ
-      },
-      style: {
-        fill: config.color,
-        stroke: '#333',
-        strokeWidth: 2,
-        opacity: 1,
-        cornerRadius: 4,
-      },
-      isSelected: false,
-      isLocked: false,
-      layerIndex: CANVAS_CONFIG.LAYERS.DEVICES,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
     try {
-      // ➕ НОВА ЛОГИКА: Използвай Command Pattern
-      const command = this.undoRedoService.createAddDeviceCommand(device, this.projectState);
-      this.undoRedoService.executeCommand(command);
+      // ➕ НОВА ЛОГИКА: Използвай DeviceLibraryService
+      console.log(`🏭 Creating device from template: ${type}`);
 
-      console.log(`✅ Device added via command: ${device.metadata.name}`);
+      // Намери template за този device type
+      const templates = this.deviceLibrary.getTemplates();
+      const template = templates.find(t => t.deviceType === type);
+
+      if (!template) {
+        console.error(`❌ No template found for device type: ${type}`);
+        return;
+      }
+
+      console.log(`📋 Using template: ${template.name} (ID: ${template.id})`);
+
+      // Генерирай random позиция
+      const position: Point = {
+        x: Math.random() * 400 + 100,
+        y: Math.random() * 300 + 100
+      };
+
+      // Създай device от template
+      const result = this.deviceLibrary.createDeviceFromTemplate(
+        template.id,
+        position,
+        {
+          // Customizations (ако са нужни)
+          position: project.settings.snapToGrid
+            ? MathUtils.snapToGrid(position, project.settings.gridSize)
+            : position
+        }
+      );
+
+      if (result.success && result.device) {
+        // Добави device към project чрез Command Pattern
+        const command = this.undoRedoService.createAddDeviceCommand(result.device, this.projectState);
+        this.undoRedoService.executeCommand(command);
+
+        console.log(`✅ Device created from template: ${result.device.metadata.name}`);
+        console.log(`📊 Template usage updated:`, result.template?.usage);
+      } else {
+        console.error('❌ Failed to create device from template:', result.error);
+      }
+
     } catch (error) {
-      console.error('❌ Error adding device via command:', error);
+      console.error('❌ Error creating device from template:', error);
     }
   }
 
@@ -1011,6 +1073,61 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     } catch (error) {
       console.error('❌ Error clearing devices via batch command:', error);
     }
+  }
+
+  // === NEW: DEVICE LIBRARY METHODS ===
+
+  /** Current search query */
+  searchQuery: string = '';
+
+  /**
+   * Handle search query changes
+   */
+  onSearchQueryChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    this.searchQuery = target.value;
+
+    // Trigger debounced search via DeviceLibraryService
+    this.deviceLibrary.quickSearch(this.searchQuery);
+
+    console.log(`🔍 Search query updated: "${this.searchQuery}"`);
+  }
+
+  /**
+   * Clear search and filters
+   */
+  clearDeviceSearch(): void {
+    this.searchQuery = '';
+    this.deviceLibrary.clearFilters();
+    console.log('🧹 Device search cleared');
+  }
+
+  /**
+   * Add template to favorites
+   */
+  addTemplateToFavorites(templateId: string): void {
+    const success = this.deviceLibrary.addToFavorites(templateId);
+    if (success) {
+      console.log('⭐ Template added to favorites');
+    }
+  }
+
+  /**
+   * Remove template from favorites  
+   */
+  removeTemplateFromFavorites(templateId: string): void {
+    const success = this.deviceLibrary.removeFromFavorites(templateId);
+    if (success) {
+      console.log('💔 Template removed from favorites');
+    }
+  }
+
+  /**
+   * Get device library analytics
+   */
+  getLibraryAnalytics(): void {
+    const analytics = this.deviceLibrary.getAnalytics();
+    console.log('📊 Device Library Analytics:', analytics);
   }
 
   /**
