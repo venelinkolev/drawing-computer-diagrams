@@ -5,3 +5,4 @@ export * from './template.model';
 export * from './canvas.model';
 export * from './command.model';
 export * from './device-library.model';
+export * from './connection-service.model';
