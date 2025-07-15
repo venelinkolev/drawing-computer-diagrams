@@ -683,11 +683,33 @@ export class DeviceLibraryService {
         const templates: DeviceTemplate[] = [];
 
         Object.entries(DEVICE_CONFIG).forEach(([deviceType, config]) => {
+            const category = this.getDeviceCategory(deviceType as DeviceType);
+            const deviceName = deviceType.charAt(0).toUpperCase() + deviceType.slice(1).replace(/_/g, ' ');
+
+            // ➕ ПОДОБРЕНИ KEYWORDS - включва category names и related terms
+            const keywords = [
+                deviceType,
+                deviceName.toLowerCase(),
+                category.toLowerCase(),
+                // Category-specific keywords
+                ...(category === DeviceCategory.NETWORK ? ['network', 'networking', 'connectivity', 'infrastructure'] : []),
+                ...(category === DeviceCategory.SERVERS ? ['server', 'hosting', 'backend', 'database'] : []),
+                ...(category === DeviceCategory.COMPUTERS ? ['computer', 'pc', 'workstation', 'desktop', 'laptop'] : []),
+                ...(category === DeviceCategory.PERIPHERALS ? ['peripheral', 'device', 'hardware', 'equipment'] : []),
+                ...(category === DeviceCategory.STORAGE ? ['storage', 'disk', 'data', 'backup'] : []),
+                // Device-specific keywords
+                ...(deviceType === 'router' ? ['routing', 'gateway', 'internet'] : []),
+                ...(deviceType === 'switch' ? ['switching', 'hub', 'port'] : []),
+                ...(deviceType === 'access_point' ? ['wifi', 'wireless', 'ap'] : []),
+                ...(deviceType === 'server' ? ['hosting', 'services'] : []),
+                ...(deviceType === 'printer' ? ['printing', 'document'] : [])
+            ];
+
             const template: DeviceTemplate = {
                 id: `builtin_${deviceType}`,
-                name: deviceType.charAt(0).toUpperCase() + deviceType.slice(1).replace(/_/g, ' '), // ➕ ПОПРАВКА: Generate name from deviceType
-                description: `Built-in ${deviceType} device template`,
-                category: this.getDeviceCategory(deviceType as DeviceType),
+                name: deviceName,
+                description: `Built-in ${deviceName} device template`,
+                category,
                 deviceType: deviceType as DeviceType,
                 icon: config.icon,
                 defaultSize: config.defaultSize,
@@ -699,11 +721,10 @@ export class DeviceLibraryService {
                     cornerRadius: 4
                 },
                 metadata: {
-                    tags: [deviceType, 'built-in'],
-                    keywords: [deviceType, deviceType.replace(/_/g, ' ')] // ➕ POПРАВКА: Remove config.name reference
+                    tags: [deviceType, 'built-in', category.toLowerCase()], // ➕ ДОБАВЕН CATEGORY TAG
+                    keywords // ➕ ПОДОБРЕНИ KEYWORDS
                 },
                 assets: {
-                    // ➕ ПОПРАВКА: Remove config.iconUrl reference since it doesn't exist
                     iconUrl: undefined
                 },
                 configuration: {

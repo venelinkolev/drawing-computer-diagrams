@@ -421,6 +421,152 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
           </mat-card-content>
         </mat-card>
 
+        <!-- NEW: Search Results Panel -->
+        <mat-card style="margin-top: 16px;">
+          <mat-card-header>
+            <mat-card-title>Search Results</mat-card-title>
+            <mat-card-subtitle>
+              {{ (deviceLibrary.searchResults$ | async)?.length || 0 }} template(s) found
+              <span *ngIf="(deviceLibrary.hasActiveFilters$ | async)" style="color: #FF9800;">
+                (filtered)
+              </span>
+            </mat-card-subtitle>
+          </mat-card-header>
+          <mat-card-content style="margin-top: 16px;">
+            
+            <!-- Loading State -->
+            <div *ngIf="(deviceLibrary.isLoading$ | async)" style="text-align: center; padding: 20px;">
+              <mat-icon style="animation: spin 1s linear infinite; font-size: 24px;">refresh</mat-icon>
+              <div style="margin-top: 8px; color: #666;">Loading templates...</div>
+            </div>
+
+            <!-- Empty State -->
+           <!-- Empty State - ПОПРАВЕНА ВЕРСИЯ -->
+            <div *ngIf="!(deviceLibrary.isLoading$ | async) && ((deviceLibrary.searchResults$ | async)?.length || 0) === 0" 
+                 style="text-align: center; padding: 20px; color: #666;">
+              <mat-icon style="
+                font-size: 48px; 
+                width: 48px; 
+                height: 48px; 
+                opacity: 0.3;
+                color: #999;
+                margin-bottom: 8px;
+              ">search_off</mat-icon>
+              <div style="margin-top: 8px; font-size: 14px; font-weight: 500;">
+                No devices found
+              </div>
+              <div style="font-size: 12px; margin-top: 4px; color: #888;">
+                <span *ngIf="searchQuery">No results for "{{ searchQuery }}"</span>
+                <span *ngIf="!searchQuery && (deviceLibrary.hasActiveFilters$ | async)">No devices match your filters</span>
+                <span *ngIf="!searchQuery && !(deviceLibrary.hasActiveFilters$ | async)">Try searching for devices</span>
+              </div>
+              <button 
+                mat-stroked-button 
+                (click)="clearAllFilters()" 
+                *ngIf="(deviceLibrary.hasActiveFilters$ | async)"
+                style="margin-top: 12px; font-size: 11px;">
+                Clear All Filters
+              </button>
+            </div>
+
+            <!-- Results Grid -->
+            <div *ngIf="!(deviceLibrary.isLoading$ | async) && ((deviceLibrary.searchResults$ | async)?.length || 0) > 0"
+                 style="display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 400px; overflow-y: auto;">
+              
+              <div *ngFor="let template of (deviceLibrary.searchResults$ | async); trackBy: trackTemplate" 
+                   class="template-card"
+                   [style.background]="template.usage.isFavorite ? '#FFF3E0' : '#FAFAFA'"
+                   [style.border]="template.usage.isFavorite ? '2px solid #FF9800' : '1px solid #E0E0E0'"
+                   style="
+                     padding: 12px;
+                     border-radius: 8px;
+                     cursor: pointer;
+                     transition: all 0.2s ease;
+                   "
+                   (mouseenter)="onTemplateHover(template, true)"
+                   (mouseleave)="onTemplateHover(template, false)"
+                   (click)="onTemplateClick(template)">
+                
+                <!-- Template Header -->
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                  <div style="flex: 1;">
+                    <div style="font-weight: 500; font-size: 13px; color: #333;">
+                      {{ template.icon }} {{ template.name }}
+                    </div>
+                    <div style="font-size: 11px; color: #666; margin-top: 2px;">
+                      {{ template.category | titlecase }} • {{ template.deviceType | titlecase }}
+                    </div>
+                  </div>
+                  
+                  <!-- Favorite Button -->
+                  <button 
+                    mat-icon-button 
+                    (click)="toggleTemplateFavorite(template, $event)"
+                    [style.color]="template.usage.isFavorite ? '#FF9800' : '#CCC'"
+                    title="{{ template.usage.isFavorite ? 'Remove from favorites' : 'Add to favorites' }}"
+                    style="width: 32px; height: 32px;">
+                    <mat-icon style="font-size: 18px;">
+                      {{ template.usage.isFavorite ? 'star' : 'star_border' }}
+                    </mat-icon>
+                  </button>
+                </div>
+
+                <!-- Template Description -->
+                <div style="font-size: 11px; color: #555; margin-bottom: 8px; line-height: 1.3;">
+                  {{ template.description }}
+                </div>
+
+                <!-- Template Metadata -->
+                <div style="display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                  <span *ngFor="let tag of template.metadata.tags.slice(0, 3)" 
+                        style="
+                          background: #E3F2FD;
+                          color: #1976D2;
+                          padding: 2px 6px;
+                          border-radius: 12px;
+                          font-size: 10px;
+                          font-weight: 500;
+                        ">
+                    {{ tag }}
+                  </span>
+                </div>
+
+                <!-- Template Stats -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                  <div style="font-size: 10px; color: #888;">
+                    <span *ngIf="template.usage.useCount > 0">Used {{ template.usage.useCount }}x</span>
+                    <span *ngIf="template.usage.useCount === 0">Never used</span>
+                    <span *ngIf="template.usage.lastUsed"> • {{ template.usage.lastUsed | date:'short' }}</span>
+                  </div>
+                  <div style="font-size: 10px; color: #888;">
+                    ⭐ {{ template.usage.popularity }}
+                  </div>
+                </div>
+
+                <!-- Template Actions -->
+                <div style="display: flex; gap: 6px;">
+                  <button 
+                    mat-stroked-button 
+                    color="primary"
+                    (click)="createDeviceFromTemplate(template, $event)"
+                    [disabled]="!(projectState.hasActiveProject$ | async)"
+                    style="flex: 1; font-size: 10px; padding: 4px 8px;">
+                    <mat-icon style="font-size: 14px; margin-right: 4px;">add</mat-icon>
+                    Add Device
+                  </button>
+                  <button 
+                    mat-icon-button 
+                    (click)="showTemplateDetails(template, $event)"
+                    title="View details"
+                    style="width: 28px; height: 28px;">
+                    <mat-icon style="font-size: 16px;">info</mat-icon>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </mat-card-content>
+        </mat-card>
+
         <!-- NEW: Editor State Demo -->
         <mat-card style="margin-top: 16px;">
           <mat-card-header>
@@ -667,6 +813,20 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
     :host {
       display: block;
       height: 100vh;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    
+    .template-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+    }
+    
+    .template-card {
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
   `]
 })
@@ -1351,6 +1511,132 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         this.removeTemplateFromFavorites(testTemplates[0].id);
       }
     }, 2000);
+  }
+
+  // === NEW: TEMPLATE INTERACTION METHODS ===
+
+  /**
+   * Track template for ngFor performance
+   */
+  trackTemplate(index: number, template: any): string {
+    return template.id;
+  }
+
+  /**
+   * Handle template hover states
+   */
+  onTemplateHover(template: any, isHovering: boolean): void {
+    // Could add hover effects or preview functionality here
+    if (isHovering) {
+      console.log(`👆 Hovering template: ${template.name}`);
+    }
+  }
+
+  /**
+   * Handle template click (show details or quick add)
+   */
+  onTemplateClick(template: any): void {
+    console.log(`🖱️ Template clicked: ${template.name}`);
+    // Could show detailed template modal or quick actions
+    this.showTemplateDetails(template, null);
+  }
+
+  /**
+   * Toggle template favorite status
+   */
+  toggleTemplateFavorite(template: any, event: Event): void {
+    // Prevent event bubbling to parent click handler
+    event.stopPropagation();
+
+    if (template.usage.isFavorite) {
+      this.removeTemplateFromFavorites(template.id);
+      console.log(`💔 Removed from favorites: ${template.name}`);
+    } else {
+      this.addTemplateToFavorites(template.id);
+      console.log(`⭐ Added to favorites: ${template.name}`);
+    }
+  }
+
+  /**
+   * Create device from template with UI feedback
+   */
+  createDeviceFromTemplate(template: any, event: Event): void {
+    // Prevent event bubbling
+    event.stopPropagation();
+
+    console.log(`🏭 Creating device from template: ${template.name}`);
+
+    const project = this.projectState.getCurrentProject();
+    if (!project) {
+      console.warn('⚠️ No active project');
+      return;
+    }
+
+    // Generate random position
+    const position: Point = {
+      x: Math.random() * 400 + 100,
+      y: Math.random() * 300 + 100
+    };
+
+    // Create device from template
+    const result = this.deviceLibrary.createDeviceFromTemplate(
+      template.id,
+      position,
+      {
+        position: project.settings.snapToGrid
+          ? MathUtils.snapToGrid(position, project.settings.gridSize)
+          : position
+      }
+    );
+
+    if (result.success && result.device) {
+      // Add device to project via Command Pattern
+      const command = this.undoRedoService.createAddDeviceCommand(result.device, this.projectState);
+      this.undoRedoService.executeCommand(command);
+
+      console.log(`✅ Device created from template UI: ${result.device.metadata.name}`);
+    } else {
+      console.error('❌ Failed to create device from template UI:', result.error);
+    }
+  }
+
+  /**
+   * Show template details (placeholder for future modal)
+   */
+  showTemplateDetails(template: any, event: Event | null): void {
+    if (event) {
+      event.stopPropagation();
+    }
+
+    console.log(`ℹ️ Template Details for: ${template.name}`);
+    console.log('📋 Template Data:', {
+      id: template.id,
+      category: template.category,
+      deviceType: template.deviceType,
+      defaultSize: template.defaultSize,
+      tags: template.metadata.tags,
+      usage: template.usage,
+      createdAt: template.createdAt
+    });
+
+    // Future: Open template details modal
+    // this.openTemplateModal(template);
+  }
+
+  /**
+   * Demo: Load different template sets
+   */
+  loadMoreTemplates(): void {
+    console.log('📦 Loading more templates...');
+    // Future: Load additional template packs or user-created templates
+  }
+
+  /**
+   * Demo: Show template creation workflow
+   */
+  showCreateCustomTemplate(): void {
+    console.log('🎨 Opening custom template creator...');
+    // Future: Open custom template creation wizard
   }
 
   /**
