@@ -940,6 +940,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   // Manual subscription management
   private destroy$ = new Subject<void>();
 
+  // Connection state properties
+  selectedConnections: any[] = [];
+  currentDrawingState: any = null;
+
   constructor() {
     // Device count logging (keep this for debugging)
     this.projectState.deviceCount$
@@ -1006,6 +1010,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         console.log(`🔗 Connections count: ${count}`);
       });
 
+    this.connectionService.isEnabled$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(enabled => {
+        console.log(`🔗 Connection service: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+      });
+
     this.connectionService.isDrawing$
       .pipe(takeUntil(this.destroy$))
       .subscribe(isDrawing => {
@@ -1019,9 +1029,18 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       });
 
     // NEW: Connection drawing preview updates
+    this.connectionService.selectedConnections$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(selectedConnections => {
+        this.selectedConnections = selectedConnections;
+        console.log(`🎯 Selected connections updated: ${selectedConnections.length}`);
+      });
+
     this.connectionService.drawingState$
       .pipe(takeUntil(this.destroy$))
       .subscribe(drawingState => {
+        this.currentDrawingState = drawingState;
+
         if (drawingState.isDrawing) {
           this.renderConnectionPreview();
         } else {
@@ -1632,6 +1651,36 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   /** Connection drawing state */
   isDrawingConnection: boolean = false;
 
+  // === OPTIONAL: Getter методи за лесен достъп ===
+
+  /**
+   * Get current connections
+   */
+  get currentConnections(): any[] {
+    return this.projectState.getCurrentProject()?.connections || [];
+  }
+
+  /**
+   * Get currently selected connections
+   */
+  get currentSelectedConnections(): any[] {
+    return this.selectedConnections;
+  }
+
+  /**
+   * Check if connection is selected
+   */
+  isConnectionSelected(connectionId: string): boolean {
+    return this.selectedConnections.some(c => c.id === connectionId);
+  }
+
+  /**
+   * Check if currently drawing connection
+   */
+  get isCurrentlyDrawing(): boolean {
+    return this.currentDrawingState?.isDrawing || false;
+  }
+
   /**
    * Set editor to connection mode
    */
@@ -1921,7 +1970,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     });
 
     line.on('mouseleave', () => {
-      const isSelected = this.connectionService.getService()?.selectedConnections?.some((c: any) => c.id === connection.id);
+      // FIXED: Use proper observable pattern
+      const isSelected = this.selectedConnections.some((c: any) => c.id === connection.id);
       line.stroke(isSelected ? '#2196F3' : connection.visualStyle?.stroke || '#4CAF50');
       this.layer.batchDraw();
     });
@@ -2022,18 +2072,18 @@ export class AppComponent implements AfterViewInit, OnDestroy {
    * Render connection drawing preview
    */
   private renderConnectionPreview(): void {
-    const drawingState = this.connectionService.getService()?.drawingState;
-    if (!drawingState?.isDrawing || !drawingState.previewPoints || !this.layer) return;
+    // FIXED: Use component property instead of .value
+    if (!this.currentDrawingState?.isDrawing || !this.currentDrawingState.previewPoints || !this.layer) return;
 
     // Remove existing preview
     const existingPreview = this.layer.find('.connection-preview');
     existingPreview.forEach(node => node.destroy());
 
-    if (drawingState.previewPoints.length < 2) return;
+    if (this.currentDrawingState.previewPoints.length < 2) return;
 
     // Flatten points for Konva
     const points: number[] = [];
-    drawingState.previewPoints.forEach(point => {
+    this.currentDrawingState.previewPoints.forEach((point: Point) => {
       points.push(point.x, point.y);
     });
 
