@@ -41,6 +41,7 @@ import { ProjectStateService } from '@core/services/project-state.service';
 import { EditorStateService } from '@core/services/editor-state.service';
 import { UndoRedoService } from '@core/services/undo-redo.service';
 import { DeviceLibraryService } from '@core/services/device-library.service';
+import { ConnectionService } from '@core/services/connection.service';
 
 @Component({
   selector: 'app-root',
@@ -177,6 +178,46 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
                   (click)="resetZoom()"
                   [disabled]="!(editorState.isInitialized$ | async)">
                   <mat-icon>center_focus_strong</mat-icon>
+                </button>
+              </div>
+
+              <!-- Connection Drawing Mode -->
+              <div style="display: flex; gap: 8px;">
+                <button 
+                  mat-raised-button 
+                  [color]="(editorState.currentMode$ | async) === 'connect' ? 'primary' : 'basic'"
+                  (click)="setConnectionMode()"
+                  [disabled]="!(editorState.isInitialized$ | async) || !(connectionService.isEnabled$ | async)">
+                  <mat-icon>timeline</mat-icon>
+                  Connect
+                </button>
+                <button 
+                  mat-stroked-button 
+                  (click)="cancelConnectionDrawing()"
+                  [disabled]="!(connectionService.isDrawing$ | async)"
+                  style="font-size: 11px;">
+                  <mat-icon>close</mat-icon>
+                  Cancel
+                </button>
+              </div>
+
+              <!-- Connection Drawing Settings -->
+              <div *ngIf="(editorState.currentMode$ | async) === 'connect'" 
+                   style="display: flex; gap: 8px; padding: 8px; background: #F5F5F5; border-radius: 4px;">
+                <span style="font-size: 11px; color: #666; align-self: center;">Drawing:</span>
+                <button 
+                  mat-stroked-button 
+                  [color]="connectionDrawingMode === 'straight' ? 'accent' : 'basic'"
+                  (click)="setConnectionDrawingMode('straight')"
+                  style="font-size: 10px; padding: 2px 8px;">
+                  📏 Straight
+                </button>
+                <button 
+                  mat-stroked-button 
+                  [color]="connectionDrawingMode === 'orthogonal' ? 'accent' : 'basic'"
+                  (click)="setConnectionDrawingMode('orthogonal')"
+                  style="font-size: 10px; padding: 2px 8px;">
+                  📐 L-Shape
                 </button>
               </div>
 
@@ -640,6 +681,40 @@ import { DeviceLibraryService } from '@core/services/device-library.service';
           </mat-card-content>
         </mat-card>
 
+        <!-- NEW: Connection Service State -->
+        <mat-card style="margin-top: 16px;">
+          <mat-card-header>
+            <mat-card-title>Connection Service</mat-card-title>
+          </mat-card-header>
+          <mat-card-content style="margin-top: 16px;">
+            <div style="font-size: 12px; line-height: 1.6;">
+              <div><strong>Service:</strong> {{ (connectionService.isEnabled$ | async) ? '✅ Enabled' : '❌ Disabled' }}</div>
+              <div><strong>Connections:</strong> {{ (connectionService.connectionCount$ | async) }}</div>
+              <div><strong>Selected:</strong> {{ (connectionService.selectedConnectionCount$ | async) }}</div>
+              <div><strong>Drawing:</strong> {{ (connectionService.isDrawing$ | async) ? '✏️ Active' : '❌ Inactive' }}</div>
+              <div><strong>Anchors:</strong> {{ (connectionService.availableAnchorCount$ | async) }} available</div>
+              <div><strong>Mode:</strong> {{ connectionDrawingMode }}</div>
+              <!-- Test Buttons -->
+              <div style="margin-top: 8px; display: flex; gap: 4px;">
+                <button 
+                  mat-stroked-button 
+                  color="accent"
+                  (click)="testConnectionCreation()"
+                  [disabled]="!(connectionService.isEnabled$ | async)"
+                  style="font-size: 10px; padding: 2px 8px;">
+                  🧪 Test Connect
+                </button>
+                <button 
+                  mat-stroked-button 
+                  (click)="getConnectionAnalytics()"
+                  style="font-size: 10px; padding: 2px 8px;">
+                  📊 Analytics
+                </button>
+              </div>
+            </div>
+          </mat-card-content>
+        </mat-card>
+
         <mat-card style="margin-top: 16px;">
           <mat-card-header>
             <mat-card-title>Reactive State Demo</mat-card-title>
@@ -838,6 +913,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   readonly editorState = inject(EditorStateService);
   readonly undoRedoService = inject(UndoRedoService);
   readonly deviceLibrary = inject(DeviceLibraryService);
+  readonly connectionService = inject(ConnectionService);
   private readonly cdr = inject(ChangeDetectorRef);
 
   // Expose imports for template
@@ -921,6 +997,41 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       .pipe(takeUntil(this.destroy$))
       .subscribe(favorites => {
         console.log(`⭐ Favorite templates: ${favorites.length}`);
+      });
+
+    // NEW: Connection Service state logging for debugging
+    this.connectionService.connectionCount$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(count => {
+        console.log(`🔗 Connections count: ${count}`);
+      });
+
+    this.connectionService.isDrawing$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(isDrawing => {
+        console.log(`✏️ Connection drawing: ${isDrawing ? 'ACTIVE' : 'INACTIVE'}`);
+      });
+
+    this.connectionService.selectedConnectionCount$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(count => {
+        console.log(`🎯 Selected connections: ${count}`);
+      });
+
+    // NEW: Connection drawing preview updates
+    this.connectionService.drawingState$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(drawingState => {
+        if (drawingState.isDrawing) {
+          this.renderConnectionPreview();
+        } else {
+          // Clear preview when not drawing
+          if (this.layer) {
+            const existingPreview = this.layer.find('.connection-preview');
+            existingPreview.forEach(node => node.destroy());
+            this.layer.batchDraw();
+          }
+        }
       });
   }
 
@@ -1513,6 +1624,454 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }, 2000);
   }
 
+  // === NEW: CONNECTION SERVICE METHODS ===
+
+  /** Current connection drawing mode */
+  connectionDrawingMode: string = 'straight';
+
+  /** Connection drawing state */
+  isDrawingConnection: boolean = false;
+
+  /**
+   * Set editor to connection mode
+   */
+  setConnectionMode(): void {
+    const result = this.editorState.setMode('connect' as any);
+    if (result.success) {
+      console.log('🔗 AppComponent: Connection mode activated');
+    }
+  }
+
+  /**
+   * Set connection drawing mode
+   */
+  setConnectionDrawingMode(mode: 'straight' | 'orthogonal' | 'bezier'): void {
+    this.connectionDrawingMode = mode;
+
+    // Map to ConnectionService enum
+    const drawingModeMap = {
+      'straight': 'straight',
+      'orthogonal': 'orthogonal',
+      'bezier': 'bezier'
+    };
+
+    this.connectionService.setDrawingMode(drawingModeMap[mode] as any);
+    console.log(`🎨 Connection drawing mode: ${mode}`);
+  }
+
+  /**
+   * Cancel current connection drawing
+   */
+  cancelConnectionDrawing(): void {
+    this.connectionService.cancelDrawing();
+    this.isDrawingConnection = false;
+    console.log('🚫 Connection drawing cancelled');
+  }
+
+  /**
+   * Start connection drawing from device
+   */
+  startConnectionFromDevice(device: any, clickPoint: any): void {
+    if (!this.connectionService || !device) return;
+
+    console.log(`🎨 Starting connection from device: ${device.metadata.name}`);
+
+    const success = this.connectionService.startDrawing(
+      device,
+      clickPoint,
+      'ethernet' as any // Default connection type
+    );
+
+    if (success) {
+      this.isDrawingConnection = true;
+      console.log('✅ Connection drawing started successfully');
+    } else {
+      console.error('❌ Failed to start connection drawing');
+    }
+  }
+
+  /**
+   * Update connection drawing preview
+   */
+  updateConnectionDrawing(currentPoint: any, snapDevice?: any): void {
+    if (this.isDrawingConnection && this.connectionService) {
+      this.connectionService.updateDrawing(currentPoint, snapDevice);
+    }
+  }
+
+  /**
+   * Finish connection drawing
+   */
+  finishConnectionDrawing(endDevice: any, endPoint: any): void {
+    if (!this.isDrawingConnection || !this.connectionService) return;
+
+    console.log(`🏁 Finishing connection to device: ${endDevice.metadata.name}`);
+
+    const result = this.connectionService.finishDrawing(
+      endDevice,
+      endPoint,
+      'ethernet' as any,
+      this.projectState
+    );
+
+    if (result.success) {
+      console.log('✅ Connection created successfully:', result.connection?.id);
+    } else {
+      console.error('❌ Failed to create connection:', result.error);
+    }
+
+    this.isDrawingConnection = false;
+  }
+
+  /**
+   * Get connection analytics
+   */
+  getConnectionAnalytics(): void {
+    const analytics = this.connectionService.getAnalytics();
+    console.log('📊 Connection Analytics:');
+    console.log(`  🔗 Total Connections: ${analytics.totalConnections}`);
+    console.log(`  📂 By Type:`, analytics.connectionsByType);
+    console.log(`  📏 Average Length: ${analytics.averageConnectionLength.toFixed(2)}px`);
+    console.log(`  🎯 Most Connected:`, analytics.mostConnectedDevice);
+    console.log(`  📈 Connection Density: ${analytics.connectionDensity.toFixed(2)}`);
+    console.log(`  🔍 Topology:`, analytics.topologyAnalysis);
+  }
+
+  /**
+   * Test connection creation
+   */
+  testConnectionCreation(): void {
+    console.log('🧪 Testing connection creation...');
+
+    const project = this.projectState.getCurrentProject();
+    if (!project || project.devices.length < 2) {
+      console.warn('⚠️ Need at least 2 devices to test connections');
+      return;
+    }
+
+    // Create test connection between first two devices
+    const device1 = project.devices[0];
+    const device2 = project.devices[1];
+
+    const request = {
+      sourceDeviceId: device1.id,
+      targetDeviceId: device2.id,
+      connectionType: 'ethernet' as any,
+      metadata: {
+        name: `Test Connection ${Date.now()}`,
+        description: 'Test connection created via ConnectionService'
+      }
+    };
+
+    const result = this.connectionService.createConnection(request, this.projectState);
+
+    if (result.success) {
+      console.log('✅ Test connection created:', result.connection?.id);
+    } else {
+      console.error('❌ Test connection failed:', result.error);
+    }
+  }
+
+  // === NEW: CONNECTION MOUSE HANDLING ===
+
+  /**
+   * Handle mouse down in connection mode
+   */
+  private handleConnectionMouseDown(e: any, pointer: Point): void {
+    const target = e.target;
+
+    if (this.isDrawingConnection) {
+      // Already drawing - this might be the end point
+      console.log('🎯 Connection drawing in progress - checking for end device');
+      return;
+    }
+
+    // Check if clicked on a device
+    const device = this.getDeviceFromTarget(target);
+    if (device) {
+      console.log(`🎨 Starting connection from device: ${device.metadata.name}`);
+      this.startConnectionFromDevice(device, pointer);
+    } else {
+      console.log('⚠️ Connection mode requires clicking on a device');
+    }
+  }
+
+  /**
+   * Handle mouse move in connection mode
+   */
+  private handleConnectionMouseMove(e: any, pointer: Point): void {
+    if (!this.isDrawingConnection) return;
+
+    // Check if hovering over a device
+    const target = e.target;
+    const snapDevice = this.getDeviceFromTarget(target);
+
+    // Update connection preview
+    this.updateConnectionDrawing(pointer, snapDevice);
+
+    // Update cursor based on snap target
+    if (snapDevice) {
+      this.stage.container().style.cursor = 'crosshair';
+    } else {
+      this.stage.container().style.cursor = 'not-allowed';
+    }
+  }
+
+  /**
+   * Handle mouse up in connection mode
+   */
+  private handleConnectionMouseUp(e: any, pointer: Point): void {
+    if (!this.isDrawingConnection) return;
+
+    const target = e.target;
+    const endDevice = this.getDeviceFromTarget(target);
+
+    if (endDevice) {
+      console.log(`🏁 Ending connection at device: ${endDevice.metadata.name}`);
+      this.finishConnectionDrawing(endDevice, pointer);
+    } else {
+      console.log('❌ Connection must end on a device - cancelling');
+      this.cancelConnectionDrawing();
+    }
+
+    // Reset cursor
+    this.stage.container().style.cursor = 'default';
+  }
+
+  /**
+   * Get device from Konva target
+   */
+  private getDeviceFromTarget(target: any): any {
+    if (!target) return null;
+
+    // Check if target has deviceId attribute
+    const deviceId = target.getAttr('deviceId');
+    if (deviceId) {
+      return this.projectState.getDevice(deviceId);
+    }
+
+    // Check parent group
+    const parent = target.getParent();
+    if (parent) {
+      const parentDeviceId = parent.getAttr('deviceId');
+      if (parentDeviceId) {
+        return this.projectState.getDevice(parentDeviceId);
+      }
+    }
+
+    return null;
+  }
+
+  // === NEW: CONNECTION RENDERING ===
+
+  /**
+   * Render all connections on canvas
+   */
+  private renderConnections(connections: any[]): void {
+    if (!this.layer) return;
+
+    console.log(`🎨 Rendering ${connections.length} connections on canvas`);
+
+    // Remove existing connections
+    const existingConnections = this.layer.find('.connection');
+    existingConnections.forEach(node => node.destroy());
+
+    // Render each connection
+    connections.forEach(connection => {
+      this.renderSingleConnection(connection);
+    });
+
+    this.layer.batchDraw();
+  }
+
+  /**
+   * Render single connection as line
+   */
+  private renderSingleConnection(connection: any): void {
+    if (!this.layer || !connection.points || connection.points.length < 2) return;
+
+    // Flatten points array for Konva
+    const points: number[] = [];
+    connection.points.forEach((point: Point) => {
+      points.push(point.x, point.y);
+    });
+
+    // Create connection line
+    const line = new Konva.Line({
+      points: points,
+      stroke: connection.visualStyle?.stroke || '#4CAF50',
+      strokeWidth: connection.visualStyle?.strokeWidth || 3,
+      lineCap: 'round',
+      lineJoin: 'round',
+      dash: connection.visualStyle?.style === 'dashed' ? [10, 5] : undefined,
+      opacity: connection.visualStyle?.opacity || 1,
+      name: 'connection',
+      id: connection.id,
+      connectionId: connection.id
+    });
+
+    // Add selection handling
+    line.on('click', () => {
+      this.selectConnection(connection);
+    });
+
+    line.on('mouseenter', () => {
+      line.stroke('#FFC107'); // Hover color
+      this.layer.batchDraw();
+    });
+
+    line.on('mouseleave', () => {
+      const isSelected = this.connectionService.getService()?.selectedConnections?.some((c: any) => c.id === connection.id);
+      line.stroke(isSelected ? '#2196F3' : connection.visualStyle?.stroke || '#4CAF50');
+      this.layer.batchDraw();
+    });
+
+    this.layer.add(line);
+
+    // Add arrows if needed
+    if (connection.visualStyle?.showArrows) {
+      this.addConnectionArrows(connection, line);
+    }
+
+    // Add label if needed
+    if (connection.visualStyle?.showLabel && connection.metadata?.name) {
+      this.addConnectionLabel(connection, points);
+    }
+  }
+
+  /**
+   * Add arrows to connection line
+   */
+  private addConnectionArrows(connection: any, line: any): void {
+    if (connection.points.length < 2) return;
+
+    const lastPoint = connection.points[connection.points.length - 1];
+    const secondLastPoint = connection.points[connection.points.length - 2];
+
+    // Calculate arrow direction
+    const dx = lastPoint.x - secondLastPoint.x;
+    const dy = lastPoint.y - secondLastPoint.y;
+    const angle = Math.atan2(dy, dx);
+
+    // Arrow size
+    const arrowSize = 12;
+
+    // Create arrow shape
+    const arrow = new Konva.Line({
+      points: [
+        lastPoint.x - arrowSize * Math.cos(angle - 0.5),
+        lastPoint.y - arrowSize * Math.sin(angle - 0.5),
+        lastPoint.x,
+        lastPoint.y,
+        lastPoint.x - arrowSize * Math.cos(angle + 0.5),
+        lastPoint.y - arrowSize * Math.sin(angle + 0.5)
+      ],
+      stroke: connection.visualStyle?.stroke || '#4CAF50',
+      strokeWidth: connection.visualStyle?.strokeWidth || 3,
+      lineCap: 'round',
+      lineJoin: 'round',
+      name: 'connection-arrow',
+      connectionId: connection.id
+    });
+
+    this.layer.add(arrow);
+  }
+
+  /**
+   * Add label to connection
+   */
+  private addConnectionLabel(connection: any, points: number[]): void {
+    if (points.length < 4) return;
+
+    // Find midpoint
+    const midIndex = Math.floor(points.length / 4) * 2; // Ensure even index
+    const x = points[midIndex];
+    const y = points[midIndex + 1];
+
+    const label = new Konva.Text({
+      x: x - 20,
+      y: y - 10,
+      text: connection.metadata.name,
+      fontSize: 10,
+      fontFamily: 'Arial',
+      fill: '#333',
+      align: 'center',
+      name: 'connection-label',
+      connectionId: connection.id
+    });
+
+    // Add background
+    const background = new Konva.Rect({
+      x: x - 25,
+      y: y - 12,
+      width: 50,
+      height: 16,
+      fill: '#FFFFFF',
+      stroke: '#DDD',
+      strokeWidth: 1,
+      cornerRadius: 2,
+      name: 'connection-label-bg',
+      connectionId: connection.id
+    });
+
+    this.layer.add(background);
+    this.layer.add(label);
+  }
+
+  /**
+   * Render connection drawing preview
+   */
+  private renderConnectionPreview(): void {
+    const drawingState = this.connectionService.getService()?.drawingState;
+    if (!drawingState?.isDrawing || !drawingState.previewPoints || !this.layer) return;
+
+    // Remove existing preview
+    const existingPreview = this.layer.find('.connection-preview');
+    existingPreview.forEach(node => node.destroy());
+
+    if (drawingState.previewPoints.length < 2) return;
+
+    // Flatten points for Konva
+    const points: number[] = [];
+    drawingState.previewPoints.forEach(point => {
+      points.push(point.x, point.y);
+    });
+
+    // Create preview line
+    const previewLine = new Konva.Line({
+      points: points,
+      stroke: '#9E9E9E',
+      strokeWidth: 2,
+      lineCap: 'round',
+      lineJoin: 'round',
+      dash: [5, 5],
+      opacity: 0.7,
+      name: 'connection-preview'
+    });
+
+    this.layer.add(previewLine);
+    this.layer.batchDraw();
+  }
+
+  /**
+   * Select connection visually
+   */
+  private selectConnection(connection: any): void {
+    console.log(`🎯 Connection selected: ${connection.id}`);
+
+    // Update ConnectionService selection
+    this.connectionService.selectConnection(connection.id);
+
+    // Update visual appearance
+    const connectionLines = this.layer.find(`#${connection.id}`);
+    connectionLines.forEach((line: any) => {
+      line.stroke('#2196F3'); // Selection color
+      line.strokeWidth((connection.visualStyle?.strokeWidth || 3) + 1);
+    });
+
+    this.layer.batchDraw();
+  }
+
   // === NEW: TEMPLATE INTERACTION METHODS ===
 
   /**
@@ -1747,6 +2306,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.addKeyboardSupport();
     this.addCursorSupport();
     this.addEditorStateSync();
+    this.addConnectionServiceSync();
 
     // NEW: Initialize EditorStateService with canvas dimensions
     this.editorState.initializeEditor(container.offsetWidth, container.offsetHeight);
@@ -1802,6 +2362,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       console.log(`🎯 Rendering device ${index + 1}:`, device.metadata.name, 'at', device.position);
       this.renderDevice(device);
     });
+
+    this.renderConnections(project.connections);
+
+    console.log('✅ Canvas rendering completed');
 
     this.layer.batchDraw();
     console.log('✅ Canvas render complete');
@@ -1947,13 +2511,16 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       console.log(`🖱️ Mouse down at (${pointer.x}, ${pointer.y}) - Mode: ${editorState.interaction.mode}`);
 
-      if (editorState.interaction.mode === CanvasMode.PAN) {
-        // Start pan operation
+      if (editorState.interaction.mode === 'connect') {
+        // ➕ CONNECTION MODE: Handle connection drawing
+        this.handleConnectionMouseDown(e, pointer);
+      } else if (editorState.interaction.mode === 'pan') {
+        // PAN MODE: Start pan operation
         originalPanPosition = { ...editorState.pan.position };
         this.editorState.startDragPan(pointer);
         console.log('🖐️ Pan drag started');
-      } else if (editorState.interaction.mode === CanvasMode.SELECT) {
-        // Handle selection logic (existing code)
+      } else if (editorState.interaction.mode === 'select') {
+        // SELECT MODE: Handle selection logic (existing code)
         if (e.target === this.stage) {
           console.log('🔄 Clicked on stage - preparing for potential selection clear');
         } else if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
@@ -1969,7 +2536,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       const editorState = this.editorState.getCurrentState();
 
-      // Calculate drag distance to determine if we're dragging
+      // Calculate drag distance
       const dragDistance = Math.sqrt(
         Math.pow(pointer.x - dragStartPosition.x, 2) +
         Math.pow(pointer.y - dragStartPosition.y, 2)
@@ -1977,14 +2544,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       if (dragDistance > 5 && !isDragging) {
         isDragging = true;
-        console.log('🚀 Drag threshold exceeded - starting drag operation');
       }
 
-      if (isDragging && editorState.interaction.mode === CanvasMode.PAN) {
-        // Update pan position
+      if (editorState.interaction.mode === 'connect') {
+        // ➕ CONNECTION MODE: Update drawing preview
+        this.handleConnectionMouseMove(e, pointer);
+      } else if (isDragging && editorState.interaction.mode === 'pan') {
+        // PAN MODE: Update pan position
         this.editorState.updateDragPan(pointer);
-
-        // Apply to Konva stage immediately for smooth dragging
         const currentPan = this.editorState.getCurrentState().pan;
         this.stage.position(currentPan.position);
         this.layer.batchDraw();
@@ -2000,13 +2567,16 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       console.log(`🖱️ Mouse up at (${pointer.x}, ${pointer.y}) - Was dragging: ${isDragging}`);
 
-      if (editorState.interaction.mode === CanvasMode.PAN && isDragging && originalPanPosition) {
-        // End pan operation with undo/redo support
+      if (editorState.interaction.mode === 'connect') {
+        // ➕ CONNECTION MODE: Handle connection completion
+        this.handleConnectionMouseUp(e, pointer);
+      } else if (editorState.interaction.mode === 'pan' && isDragging && originalPanPosition) {
+        // PAN MODE: End pan operation
         const finalPosition = { ...editorState.pan.position };
         this.editorState.endDragPan(finalPosition, originalPanPosition, this.undoRedoService);
         console.log('🖐️ Pan drag ended with undo/redo support');
-      } else if (editorState.interaction.mode === CanvasMode.SELECT && !isDragging) {
-        // Handle selection logic (existing code)
+      } else if (editorState.interaction.mode === 'select' && !isDragging) {
+        // SELECT MODE: Handle selection logic (existing code)
         if (e.target === this.stage) {
           console.log('🔄 Clicked on stage - clearing selection');
           this.clearSelection();
@@ -2130,6 +2700,30 @@ export class AppComponent implements AfterViewInit, OnDestroy {
             this.layer.batchDraw();
             console.log(`🔍 Auto-synced Konva stage to zoom level: ${Math.round(newScale * 100)}%`);
           }
+        }
+      });
+  }
+
+  private addConnectionServiceSync(): void {
+    // Sync connections from ProjectStateService to ConnectionService
+    this.projectState.currentProject$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(project => {
+        if (project) {
+          // Update ConnectionService with project connections
+          this.connectionService.setConnections(project.connections);
+
+          // Update available anchors from devices
+          this.connectionService.updateAnchorsFromDevices(project.devices);
+
+          // Enable connection service when project is active
+          this.connectionService.enable();
+
+          console.log(`🔗 ConnectionService synced: ${project.connections.length} connections, ${project.devices.length} devices`);
+        } else {
+          // Disable connection service when no project
+          this.connectionService.disable();
+          console.log('🔗 ConnectionService disabled - no active project');
         }
       });
   }
