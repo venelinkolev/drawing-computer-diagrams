@@ -1688,6 +1688,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const result = this.editorState.setMode('connect' as any);
     if (result.success) {
       console.log('🔗 AppComponent: Connection mode activated');
+
+      // ➕ Set cursor immediately when entering connection mode
+      this.stage.container().style.cursor = 'crosshair';
+
+      // ➕ Re-render devices to disable dragging
+      const project = this.projectState.getCurrentProject();
+      if (project) {
+        this.renderProjectOnCanvas(project);
+      }
     }
   }
 
@@ -1932,24 +1941,36 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private getDeviceFromTarget(target: any): any {
     if (!target) return null;
 
-    // Check if target has deviceId attribute
-    const deviceId = target.getAttr('deviceId');
-    if (deviceId) {
-      return this.projectState.getDevice(deviceId);
-    }
+    // ➕ IMPROVED: Check multiple ways to find device
+    let deviceId = target.getAttr('deviceId');
 
-    // Check parent group
-    const parent = target.getParent();
-    if (parent) {
-      const parentDeviceId = parent.getAttr('deviceId');
-      if (parentDeviceId) {
-        return this.projectState.getDevice(parentDeviceId);
+    if (!deviceId && target.getParent) {
+      // Check parent group
+      const parent = target.getParent();
+      if (parent) {
+        deviceId = parent.getAttr('deviceId');
       }
     }
 
+    if (!deviceId && target.findAncestor) {
+      // Check ancestor with name 'device'
+      const deviceGroup = target.findAncestor('.device');
+      if (deviceGroup) {
+        deviceId = deviceGroup.getAttr('deviceId');
+      }
+    }
+
+    if (deviceId) {
+      const device = this.projectState.getDevice(deviceId);
+      if (device) {
+        console.log(`🎯 Found device: ${device.metadata.name} (ID: ${deviceId})`);
+        return device;
+      }
+    }
+
+    console.log('⚠️ No device found for target:', target.getClassName());
     return null;
   }
-
   // === NEW: CONNECTION RENDERING ===
 
   /**
@@ -2460,67 +2481,122 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     console.log('✅ Canvas render complete');
   }
 
-  private renderDevice(device: Device): void {
-    if (!this.layer) {
-      console.warn('⚠️ Layer not ready for device rendering');
-      return;
-    }
+  private renderDevice(device: any): void {
+    if (!this.layer) return;
 
-    console.log('🔧 Creating Konva shapes for device:', device.metadata.name);
-
-    const konvaDevice = new Konva.Rect({
+    // Create device group
+    const deviceGroup = new Konva.Group({
       x: device.position.x,
       y: device.position.y,
-      width: device.size.width,
-      height: device.size.height,
-      fill: device.style.fill,
-      stroke: device.style.stroke,
-      strokeWidth: device.style.strokeWidth,
-      draggable: true,
-      deviceId: device.id,
-      name: 'device', // For easy finding
+      deviceId: device.id, // ➕ ВАЖНО: Добави deviceId атрибут
+      name: 'device'
     });
 
-    const label = new Konva.Text({
-      x: device.position.x + 5,
-      y: device.position.y + device.size.height / 2 - 8,
+    // Create device image
+    const deviceImage = new Konva.Rect({
+      width: 60,
+      height: 60,
+      fill: device.visualStyle?.backgroundColor || '#2196F3',
+      stroke: device.visualStyle?.borderColor || '#1976D2',
+      strokeWidth: 2,
+      cornerRadius: 8,
+      deviceId: device.id // ➕ ВАЖНО: Добави deviceId атрибут и тук
+    });
+
+    // Create device label
+    const deviceLabel = new Konva.Text({
+      x: -10,
+      y: 65,
+      width: 80,
       text: device.metadata.name,
-      fontSize: 11,
-      fontFamily: 'Inter',
-      fill: '#fff',
-      listening: false,
+      fontSize: 10,
+      fontFamily: 'Arial',
+      fill: '#333',
+      align: 'center',
+      deviceId: device.id
     });
 
-    // Update device position on drag
-    konvaDevice.on('dragend', () => {
-      const newPosition = {
-        x: konvaDevice.x(),
-        y: konvaDevice.y(),
-      };
+    deviceGroup.add(deviceImage);
+    deviceGroup.add(deviceLabel);
 
-      console.log('📍 Device dragged to:', newPosition);
-      this.projectState.updateDevice(device.id, { position: newPosition });
+    // ➕ CONDITIONAL DRAGGING: Only enable drag when NOT in connection mode
+    const editorState = this.editorState.getCurrentState();
+    const isConnectionMode = editorState.interaction.mode === 'connect';
 
-      // Update label position
-      label.position({
-        x: newPosition.x + 5,
-        y: newPosition.y + device.size.height / 2 - 8,
+    if (!isConnectionMode) {
+      // Enable dragging only when not in connection mode
+      deviceGroup.draggable(true);
+
+      deviceGroup.on('dragstart', () => {
+        console.log(`🎯 Device drag started: ${device.metadata.name}`);
       });
 
-      // Update selected device info if this device is selected
-      if (this.selectedDevice && this.selectedDevice.id === device.id) {
-        this.selectedDevice = { ...this.selectedDevice, position: newPosition };
-        this.cdr.detectChanges();
-      }
+      deviceGroup.on('dragmove', () => {
+        const newPosition = deviceGroup.position();
+        // ✅ FIXED: Use updateDevice instead of updateDevicePosition
+        this.projectState.updateDevice(device.id, { position: newPosition });
+      });
 
-      this.layer.batchDraw();
+      deviceGroup.on('dragend', () => {
+        const finalPosition = deviceGroup.position();
+        console.log(`🎯 Device drag ended: ${device.metadata.name} at (${finalPosition.x}, ${finalPosition.y})`);
+      });
+    } else {
+      // In connection mode, disable dragging and change cursor
+      deviceGroup.draggable(false);
+      deviceGroup.on('mouseenter', () => {
+        this.stage.container().style.cursor = 'crosshair';
+      });
+      deviceGroup.on('mouseleave', () => {
+        if (!this.isDrawingConnection) {
+          this.stage.container().style.cursor = 'default';
+        }
+      });
+    }
+
+    // Add selection events (always enabled)
+    deviceGroup.on('click', (e) => {
+      if (!isConnectionMode) {
+        // ✅ FIXED: Use proper device selection logic
+        this.handleDeviceSelection(device);
+        e.cancelBubble = true; // Prevent stage click
+      }
+      // В connection mode, click events се обработват в addSelectionHandling
     });
 
-    console.log('➕ Adding device shapes to layer');
-    this.layer.add(konvaDevice);
-    this.layer.add(label);
+    this.layer.add(deviceGroup);
+  }
 
-    console.log(`✅ Device rendered: ${device.metadata.name} at (${device.position.x}, ${device.position.y})`);
+  /**
+ * Handle device selection - NEW method to replace missing selectDevice
+ */
+  private handleDeviceSelection(device: any): void {
+    console.log(`🎯 Selecting device: ${device.metadata.name}`);
+
+    // Clear previous selection
+    this.clearSelection();
+
+    // Set new selection
+    this.selectedDevice = device;
+
+    // Find and highlight the device shape
+    const deviceShapes = this.layer.find(`[deviceId=${device.id}]`);
+    deviceShapes.forEach((shape: any) => {
+      if (shape.getClassName() === 'Group') {
+        // Highlight device group
+        const rect = shape.findOne('Rect');
+        if (rect) {
+          rect.stroke('#FF9800'); // Orange selection color
+          rect.strokeWidth(3);
+        }
+        this.selectedShape = shape;
+      }
+    });
+
+    this.layer.batchDraw();
+    this.cdr.detectChanges();
+
+    console.log(`✅ Device selected: ${device.metadata.name}`);
   }
 
   private drawGrid(): void {
@@ -2588,7 +2664,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     let dragStartPosition: Point | null = null;
     let originalPanPosition: Point | null = null;
     let isDragging = false;
-    let connectionStartDevice: any = null; // ➕ ДОБАВЕНО за connection state
+    let connectionStartDevice: any = null;
+    let mouseDownTime: number = 0; // ➕ Track timing
 
     // Mouse down event
     this.stage.on('mousedown touchstart', (e) => {
@@ -2598,27 +2675,32 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       dragStartPosition = { ...pointer };
       isDragging = false;
-      connectionStartDevice = null; // ➕ RESET connection state
+      connectionStartDevice = null;
+      mouseDownTime = Date.now(); // ➕ Track start time
 
       console.log(`🖱️ Mouse down at (${pointer.x}, ${pointer.y}) - Mode: ${editorState.interaction.mode}`);
 
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Start connection drawing
+        // ➕ CONNECTION MODE: Prevent default behavior first
+        e.evt.preventDefault();
+        e.evt.stopPropagation();
+
         const device = this.getDeviceFromTarget(e.target);
         if (device) {
           console.log(`🎨 Starting connection from device: ${device.metadata.name}`);
-          connectionStartDevice = device; // ➕ ЗАПАЗИ start device
+          connectionStartDevice = device;
           this.startConnectionFromDevice(device, pointer);
+
+          // ➕ Set cursor immediately
+          this.stage.container().style.cursor = 'crosshair';
         } else {
           console.log('⚠️ Connection mode requires clicking on a device');
         }
       } else if (editorState.interaction.mode === 'pan') {
-        // PAN MODE: Start pan operation
         originalPanPosition = { ...editorState.pan.position };
         this.editorState.startDragPan(pointer);
         console.log('🖐️ Pan drag started');
       } else if (editorState.interaction.mode === 'select') {
-        // SELECT MODE: Handle selection logic (existing code)
         if (e.target === this.stage) {
           console.log('🔄 Clicked on stage - preparing for potential selection clear');
         } else if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
@@ -2640,19 +2722,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         Math.pow(pointer.y - dragStartPosition.y, 2)
       );
 
-      if (dragDistance > 5 && !isDragging) {
+      // ➕ IMPROVED: Only set dragging after movement threshold AND time delay
+      const timeSinceMouseDown = Date.now() - mouseDownTime;
+      if (dragDistance > 3 && timeSinceMouseDown > 50 && !isDragging) {
         isDragging = true;
-        console.log('🖱️ Started dragging');
+        console.log('🖱️ Started dragging (distance + time threshold met)');
       }
 
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Update drawing preview САМО ако има активен connection
+        // ➕ CONNECTION MODE: Always update if we have a start device
         if (connectionStartDevice && this.isDrawingConnection) {
           console.log(`🎨 Connection preview update at (${pointer.x}, ${pointer.y})`);
           this.handleConnectionMouseMove(e, pointer);
         }
       } else if (isDragging && editorState.interaction.mode === 'pan') {
-        // PAN MODE: Update pan position
         this.editorState.updateDragPan(pointer);
         const currentPan = this.editorState.getCurrentState().pan;
         this.stage.position(currentPan.position);
@@ -2666,11 +2749,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       if (!pointer || !dragStartPosition) return;
 
       const editorState = this.editorState.getCurrentState();
+      const timeSinceMouseDown = Date.now() - mouseDownTime;
 
-      console.log(`🖱️ Mouse up at (${pointer.x}, ${pointer.y}) - Was dragging: ${isDragging}`);
+      console.log(`🖱️ Mouse up at (${pointer.x}, ${pointer.y}) - Was dragging: ${isDragging}, Time: ${timeSinceMouseDown}ms`);
 
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Finish connection САМО ако не е drag и има активен connection
+        // ➕ CONNECTION MODE: Only finish if we have start device and not dragging
         if (connectionStartDevice && this.isDrawingConnection && !isDragging) {
           const endDevice = this.getDeviceFromTarget(e.target);
 
@@ -2686,12 +2770,10 @@ export class AppComponent implements AfterViewInit, OnDestroy {
           }
         }
       } else if (editorState.interaction.mode === 'pan' && isDragging && originalPanPosition) {
-        // PAN MODE: End pan operation
         const finalPosition = { ...editorState.pan.position };
         this.editorState.endDragPan(finalPosition, originalPanPosition, this.undoRedoService);
         console.log('🖐️ Pan drag ended with undo/redo support');
       } else if (editorState.interaction.mode === 'select' && !isDragging) {
-        // SELECT MODE: Handle selection logic (existing code)
         if (e.target === this.stage) {
           console.log('🔄 Clicked on stage - clearing selection');
           this.clearSelection();
@@ -2705,13 +2787,33 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       dragStartPosition = null;
       originalPanPosition = null;
       isDragging = false;
-      connectionStartDevice = null; // ➕ RESET connection state
+      connectionStartDevice = null;
+      mouseDownTime = 0;
     });
 
     // Prevent context menu on right click
     this.stage.on('contextmenu', (e) => {
       e.evt.preventDefault();
     });
+  }
+
+  /**
+ * Set select mode with cursor reset
+ */
+  setSelectMode(): void {
+    const result = this.editorState.setMode('select' as any);
+    if (result.success) {
+      console.log('🎯 AppComponent: Select mode activated');
+
+      // ➕ Reset cursor when leaving connection mode
+      this.stage.container().style.cursor = 'default';
+
+      // ➕ Re-render devices to enable dragging
+      const project = this.projectState.getCurrentProject();
+      if (project) {
+        this.renderProjectOnCanvas(project);
+      }
+    }
   }
 
   private addKeyboardSupport(): void {
@@ -2851,37 +2953,54 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   };
 
   private selectShape(shape: Konva.Shape): void {
-    this.clearSelection();
+    console.log('🎯 Shape selection triggered:', shape.getClassName());
 
-    this.selectedShape = shape;
-    const deviceId = shape.getAttr('deviceId');
+    // Find device ID from shape or parent
+    let deviceId = shape.getAttr('deviceId');
 
-    if (deviceId) {
-      this.selectedDevice = this.projectState.getDevice(deviceId);
-      console.log('🎯 Device selected:', this.selectedDevice?.metadata.name);
+    if (!deviceId && shape.getParent) {
+      const parent = shape.getParent();
+      deviceId = parent?.getAttr('deviceId');
     }
 
-    shape.stroke(CANVAS_CONFIG.SELECTION.COLOR);
-    shape.strokeWidth(CANVAS_CONFIG.SELECTION.STROKE_WIDTH);
-    this.layer.batchDraw();
-
-    // Trigger Angular change detection for UI updates
-    this.cdr.detectChanges();
+    if (deviceId) {
+      const device = this.projectState.getDevice(deviceId);
+      if (device) {
+        this.handleDeviceSelection(device);
+      } else {
+        console.warn('⚠️ Device not found for shape selection:', deviceId);
+      }
+    } else {
+      console.warn('⚠️ No deviceId found for shape selection');
+    }
   }
 
   private clearSelection(): void {
     if (this.selectedShape) {
-      this.selectedShape.stroke('#333');
-      this.selectedShape.strokeWidth(2);
-      this.layer.batchDraw();
+      // Reset visual selection
+      const rect = this.selectedShape.findOne('Rect');
+      if (rect) {
+        // Get device to restore original colors
+        const deviceId = this.selectedShape.getAttr('deviceId');
+        const device = this.projectState.getDevice(deviceId);
+
+        if (device) {
+          rect.stroke(device.visualStyle?.borderColor || '#1976D2');
+          rect.strokeWidth(2);
+        } else {
+          // Fallback colors
+          rect.stroke('#1976D2');
+          rect.strokeWidth(2);
+        }
+      }
+      this.selectedShape = null;
     }
 
-    this.selectedShape = null;
     this.selectedDevice = null;
-
-    // Trigger Angular change detection for UI updates
+    this.layer?.batchDraw();
     this.cdr.detectChanges();
-    console.log('🔄 Selection cleared');
+
+    console.log('🧹 Selection cleared');
   }
 
   private clearCanvas(): void {
