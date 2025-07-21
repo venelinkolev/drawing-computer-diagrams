@@ -1712,19 +1712,30 @@ export class AppComponent implements AfterViewInit, OnDestroy {
    * Cancel current connection drawing
    */
   cancelConnectionDrawing(): void {
+    console.log('🚫 Cancelling connection drawing');
+
+    // cancelDrawing връща void - това е OK
     this.connectionService.cancelDrawing();
     this.isDrawingConnection = false;
-    console.log('🚫 Connection drawing cancelled');
+
+    // Reset cursor
+    this.stage.container().style.cursor = 'default';
+
+    console.log('✅ Connection drawing cancelled');
   }
 
   /**
    * Start connection drawing from device
    */
-  startConnectionFromDevice(device: any, clickPoint: any): void {
-    if (!this.connectionService || !device) return;
+  startConnectionFromDevice(device: any, clickPoint: Point): void {
+    if (!this.connectionService || !device) {
+      console.error('❌ Cannot start connection - service or device not available');
+      return;
+    }
 
-    console.log(`🎨 Starting connection from device: ${device.metadata.name}`);
+    console.log(`🎨 Starting connection from device: ${device.metadata.name} at (${clickPoint.x}, ${clickPoint.y})`);
 
+    // startDrawing връща boolean - това е OK
     const success = this.connectionService.startDrawing(
       device,
       clickPoint,
@@ -1734,6 +1745,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (success) {
       this.isDrawingConnection = true;
       console.log('✅ Connection drawing started successfully');
+      console.log(`🎯 isDrawingConnection set to: ${this.isDrawingConnection}`);
     } else {
       console.error('❌ Failed to start connection drawing');
     }
@@ -1742,20 +1754,37 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   /**
    * Update connection drawing preview
    */
-  updateConnectionDrawing(currentPoint: any, snapDevice?: any): void {
-    if (this.isDrawingConnection && this.connectionService) {
-      this.connectionService.updateDrawing(currentPoint, snapDevice);
+
+  updateConnectionDrawing(currentPoint: Point, snapDevice?: any): void {
+    if (!this.connectionService || !this.isDrawingConnection) {
+      console.log('⚠️ Cannot update connection drawing - service not ready or not drawing');
+      return;
     }
+
+    console.log(`🎨 Updating connection drawing at (${currentPoint.x}, ${currentPoint.y})`);
+
+    // ConnectionService.updateDrawing връща void, не boolean
+    this.connectionService.updateDrawing(
+      currentPoint,
+      snapDevice // Optional snap target
+    );
+
+    console.log('✅ Connection drawing updated successfully');
+    // Preview се render-ва автоматично чрез subscription
   }
 
   /**
    * Finish connection drawing
    */
-  finishConnectionDrawing(endDevice: any, endPoint: any): void {
-    if (!this.isDrawingConnection || !this.connectionService) return;
+  finishConnectionDrawing(endDevice: any, endPoint: Point): void {
+    if (!this.isDrawingConnection || !this.connectionService) {
+      console.log('⚠️ Cannot finish connection - not drawing or service not available');
+      return;
+    }
 
     console.log(`🏁 Finishing connection to device: ${endDevice.metadata.name}`);
 
+    // finishDrawing връща ConnectionCreationResult - това е OK
     const result = this.connectionService.finishDrawing(
       endDevice,
       endPoint,
@@ -1770,6 +1799,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }
 
     this.isDrawingConnection = false;
+
+    // Reset cursor
+    this.stage.container().style.cursor = 'default';
   }
 
   /**
@@ -1849,20 +1881,27 @@ export class AppComponent implements AfterViewInit, OnDestroy {
    * Handle mouse move in connection mode
    */
   private handleConnectionMouseMove(e: any, pointer: Point): void {
-    if (!this.isDrawingConnection) return;
+    if (!this.isDrawingConnection) {
+      console.log('⚠️ Not drawing connection - ignoring mouse move');
+      return;
+    }
+
+    console.log(`🎨 Connection mouse move at (${pointer.x}, ${pointer.y})`);
 
     // Check if hovering over a device
     const target = e.target;
     const snapDevice = this.getDeviceFromTarget(target);
 
-    // Update connection preview
+    // Update connection preview - няма нужда от boolean проверка
     this.updateConnectionDrawing(pointer, snapDevice);
 
     // Update cursor based on snap target
     if (snapDevice) {
       this.stage.container().style.cursor = 'crosshair';
+      console.log(`🎯 Hovering over device: ${snapDevice.metadata.name}`);
     } else {
       this.stage.container().style.cursor = 'not-allowed';
+      console.log('⚠️ Not hovering over valid device');
     }
   }
 
@@ -2549,6 +2588,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     let dragStartPosition: Point | null = null;
     let originalPanPosition: Point | null = null;
     let isDragging = false;
+    let connectionStartDevice: any = null; // ➕ ДОБАВЕНО за connection state
 
     // Mouse down event
     this.stage.on('mousedown touchstart', (e) => {
@@ -2558,12 +2598,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       dragStartPosition = { ...pointer };
       isDragging = false;
+      connectionStartDevice = null; // ➕ RESET connection state
 
       console.log(`🖱️ Mouse down at (${pointer.x}, ${pointer.y}) - Mode: ${editorState.interaction.mode}`);
 
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Handle connection drawing
-        this.handleConnectionMouseDown(e, pointer);
+        // ➕ CONNECTION MODE: Start connection drawing
+        const device = this.getDeviceFromTarget(e.target);
+        if (device) {
+          console.log(`🎨 Starting connection from device: ${device.metadata.name}`);
+          connectionStartDevice = device; // ➕ ЗАПАЗИ start device
+          this.startConnectionFromDevice(device, pointer);
+        } else {
+          console.log('⚠️ Connection mode requires clicking on a device');
+        }
       } else if (editorState.interaction.mode === 'pan') {
         // PAN MODE: Start pan operation
         originalPanPosition = { ...editorState.pan.position };
@@ -2594,11 +2642,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       if (dragDistance > 5 && !isDragging) {
         isDragging = true;
+        console.log('🖱️ Started dragging');
       }
 
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Update drawing preview
-        this.handleConnectionMouseMove(e, pointer);
+        // ➕ CONNECTION MODE: Update drawing preview САМО ако има активен connection
+        if (connectionStartDevice && this.isDrawingConnection) {
+          console.log(`🎨 Connection preview update at (${pointer.x}, ${pointer.y})`);
+          this.handleConnectionMouseMove(e, pointer);
+        }
       } else if (isDragging && editorState.interaction.mode === 'pan') {
         // PAN MODE: Update pan position
         this.editorState.updateDragPan(pointer);
@@ -2618,8 +2670,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       console.log(`🖱️ Mouse up at (${pointer.x}, ${pointer.y}) - Was dragging: ${isDragging}`);
 
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Handle connection completion
-        this.handleConnectionMouseUp(e, pointer);
+        // ➕ CONNECTION MODE: Finish connection САМО ако не е drag и има активен connection
+        if (connectionStartDevice && this.isDrawingConnection && !isDragging) {
+          const endDevice = this.getDeviceFromTarget(e.target);
+
+          if (endDevice && endDevice.id !== connectionStartDevice.id) {
+            console.log(`🏁 Ending connection at device: ${endDevice.metadata.name}`);
+            this.finishConnectionDrawing(endDevice, pointer);
+          } else if (endDevice && endDevice.id === connectionStartDevice.id) {
+            console.log('⚠️ Cannot connect device to itself - cancelling');
+            this.cancelConnectionDrawing();
+          } else {
+            console.log('❌ Connection must end on a device - cancelling');
+            this.cancelConnectionDrawing();
+          }
+        }
       } else if (editorState.interaction.mode === 'pan' && isDragging && originalPanPosition) {
         // PAN MODE: End pan operation
         const finalPosition = { ...editorState.pan.position };
@@ -2640,6 +2705,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       dragStartPosition = null;
       originalPanPosition = null;
       isDragging = false;
+      connectionStartDevice = null; // ➕ RESET connection state
     });
 
     // Prevent context menu on right click
