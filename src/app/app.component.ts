@@ -1931,36 +1931,44 @@ export class AppComponent implements AfterViewInit, OnDestroy {
    * Get device from Konva target
    */
   private getDeviceFromTarget(target: any): any {
-    if (!target) return null;
+    if (!target) {
+      console.log('⚠️ getDeviceFromTarget: No target provided');
+      return null;
+    }
 
-    // ➕ IMPROVED: Check multiple ways to find device
+    console.log(`🔍 Looking for device from target: ${target.getClassName()}`);
+
+    // ✅ ENHANCED: Multiple ways to find device ID
     let deviceId = target.getAttr('deviceId');
+    console.log(`🔍 Direct deviceId: ${deviceId}`);
 
     if (!deviceId && target.getParent) {
-      // Check parent group
       const parent = target.getParent();
       if (parent) {
         deviceId = parent.getAttr('deviceId');
+        console.log(`🔍 Parent deviceId: ${deviceId}`);
       }
     }
 
     if (!deviceId && target.findAncestor) {
-      // Check ancestor with name 'device'
       const deviceGroup = target.findAncestor('.device');
       if (deviceGroup) {
         deviceId = deviceGroup.getAttr('deviceId');
+        console.log(`🔍 Ancestor deviceId: ${deviceId}`);
       }
     }
 
     if (deviceId) {
       const device = this.projectState.getDevice(deviceId);
       if (device) {
-        console.log(`🎯 Found device: ${device.metadata.name} (ID: ${deviceId})`);
+        console.log(`✅ Found device: ${device.metadata.name} (ID: ${deviceId})`);
         return device;
+      } else {
+        console.log(`❌ Device ID ${deviceId} not found in project`);
       }
     }
 
-    console.log('⚠️ No device found for target:', target.getClassName());
+    console.log('❌ No device found for target');
     return null;
   }
   // === NEW: CONNECTION RENDERING ===
@@ -2505,14 +2513,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private renderDevice(device: any): void {
     if (!this.layer) return;
 
-    // Create device group
+    console.log(`🎨 Rendering device: ${device.metadata.name} (ID: ${device.id})`);
+
+    // ✅ FIXED: Create device group with PROPER attributes
     const deviceGroup = new Konva.Group({
       x: device.position.x,
       y: device.position.y,
-      deviceId: device.id,
-      name: 'device'
+      deviceId: device.id, // ➕ ESSENTIAL: Device ID attribute
+      name: 'device', // ➕ ESSENTIAL: Device class name
+      listening: true,
+      draggable: false // Will be set based on mode
     });
 
+    // ✅ FIXED: Device image with consistent attributes
     const deviceImage = new Konva.Rect({
       width: 60,
       height: 60,
@@ -2520,9 +2533,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       stroke: device.style?.stroke || '#1976D2',
       strokeWidth: device.style?.strokeWidth || 2,
       cornerRadius: device.style?.cornerRadius || 8,
-      deviceId: device.id
+      deviceId: device.id, // ➕ REDUNDANT: Also on child for safety
+      listening: true
     });
 
+    // Create device label
     const deviceLabel = new Konva.Text({
       x: -10,
       y: 65,
@@ -2532,7 +2547,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       fontFamily: 'Arial',
       fill: '#333',
       align: 'center',
-      deviceId: device.id
+      deviceId: device.id, // ➕ REDUNDANT: Also on label
+      listening: false // Labels don't need interaction
     });
 
     deviceGroup.add(deviceImage);
@@ -2541,18 +2557,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const editorState = this.editorState.getCurrentState();
     const isConnectionMode = editorState.interaction.mode === 'connect';
 
-    if (!isConnectionMode) {
-      // ✅ SELECT MODE with OPTIMIZED drag handling
-      deviceGroup.draggable(true);
+    console.log(`🔧 Setting up device interaction - Mode: ${editorState.interaction.mode}`);
 
-      // ➕ ENHANCED: Selection on click
+    if (!isConnectionMode) {
+      // ✅ SELECT MODE with optimized drag handling
+      deviceGroup.draggable(true);
+      console.log(`✅ Device ${device.metadata.name} set to draggable`);
+
+      // Enhanced selection on click
       deviceGroup.on('click', (e) => {
         console.log(`🎯 Device clicked in SELECT mode: ${device.metadata.name}`);
         this.handleDeviceSelectionSafe(device);
         e.cancelBubble = true;
       });
 
-      // ✅ PERFORMANCE FIX: Optimized drag handling WITHOUT constant re-rendering
+      // Optimized drag handling
       let originalPosition: Point;
       let isDraggingDevice = false;
 
@@ -2565,8 +2584,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       deviceGroup.on('dragmove', (e) => {
         if (!isDraggingDevice) return;
-
-        // ✅ PERFORMANCE FIX: Only update position locally, NOT project state during drag
         const newPosition = deviceGroup.position();
         console.log(`🔄 Device dragging to: (${newPosition.x}, ${newPosition.y})`);
         e.cancelBubble = true;
@@ -2580,12 +2597,9 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
         console.log(`🏁 Device drag ended: ${device.metadata.name} at (${finalPosition.x}, ${finalPosition.y})`);
 
-        // ✅ PERFORMANCE FIX: Update project state and create undo command ONLY at the end
         if (originalPosition) {
-          // Update project state once
           this.projectState.updateDevice(device.id, { position: finalPosition });
 
-          // Create undo command
           const moveCommand = this.undoRedoService.createMoveDeviceCommand(
             device.id,
             finalPosition,
@@ -2608,11 +2622,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       });
 
     } else {
-      // CONNECTION MODE
+      // ✅ CONNECTION MODE
       deviceGroup.draggable(false);
+      console.log(`✅ Device ${device.metadata.name} set to non-draggable (connection mode)`);
 
       deviceGroup.on('mouseenter', () => {
         this.stage.container().style.cursor = 'crosshair';
+        console.log(`🎯 Hovering connection target: ${device.metadata.name}`);
       });
 
       deviceGroup.on('mouseleave', () => {
@@ -2623,12 +2639,23 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }
 
     this.layer.add(deviceGroup);
+
+    // ✅ VERIFICATION: Immediate verification after adding
+    setTimeout(() => {
+      const foundDevices = this.layer.find('.device');
+      const foundThisDevice = this.layer.find(`[deviceId=${device.id}]`);
+      console.log(`✅ Verification - Device ${device.metadata.name}:`);
+      console.log(`   Total devices on layer: ${foundDevices.length}`);
+      console.log(`   This device found: ${foundThisDevice.length > 0}`);
+      console.log(`   Device findable by ID: ${foundThisDevice.length}`);
+    }, 10);
   }
+
   /**
  * Handle device selection - NEW method to replace missing selectDevice
  */
   private handleDeviceSelectionSafe(device: any): void {
-    console.log(`🎯 Selecting device: ${device.metadata.name}`);
+    console.log(`🎯 Selecting device: ${device.metadata.name} (ID: ${device.id})`);
 
     // Clear previous selection
     this.clearSelectionSafe();
@@ -2636,27 +2663,50 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     // Set new selection
     this.selectedDevice = device;
 
-    // ✅ ENHANCED: Find and highlight the device shape
-    const deviceShapes = this.layer.find(`[deviceId=${device.id}]`);
-    console.log(`🔍 Found ${deviceShapes.length} shapes for device ${device.id}`);
+    // ✅ ENHANCED: Multiple ways to find device shapes
+    console.log(`🔍 Looking for shapes for device ${device.id}...`);
 
-    deviceShapes.forEach((shape: any) => {
-      if (shape instanceof Konva.Group) {
-        const rect = this.getRectFromGroup(shape);
-        if (rect) {
-          // ✅ ENHANCED: Make selection more visible
-          this.setStroke(rect, '#FF9800'); // Orange selection color
-          this.setStrokeWidth(rect, 4); // Thicker border
-          console.log(`✅ Applied selection style to device ${device.id}`);
-        }
-        this.selectedShape = shape;
-      }
+    // Method 1: Find by deviceId attribute
+    const deviceShapesById = this.layer.find(`[deviceId=${device.id}]`);
+    console.log(`🔍 Found ${deviceShapesById.length} shapes by deviceId`);
+
+    // Method 2: Find by name class and then filter
+    const allDevices = this.layer.find('.device');
+    console.log(`🔍 Found ${allDevices.length} total devices on layer`);
+
+    const matchingDevices = allDevices.filter((shape: any) => {
+      const shapeDeviceId = shape.getAttr('deviceId');
+      console.log(`🔍 Checking device shape with ID: ${shapeDeviceId}`);
+      return shapeDeviceId === device.id;
     });
+    console.log(`🔍 Found ${matchingDevices.length} matching devices`);
 
-    this.layer.batchDraw();
+    // Use whichever method found devices
+    const deviceShapes = deviceShapesById.length > 0 ? deviceShapesById : matchingDevices;
+    console.log(`🔍 Using ${deviceShapes.length} shapes for selection`);
+
+    if (deviceShapes.length > 0) {
+      deviceShapes.forEach((shape: any, index: number) => {
+        console.log(`🎨 Applying selection to shape ${index + 1}: ${shape.getClassName()}`);
+
+        if (shape instanceof Konva.Group) {
+          const rect = this.getRectFromGroup(shape);
+          if (rect) {
+            this.setStroke(rect, '#FF9800'); // Orange selection color
+            this.setStrokeWidth(rect, 4); // Thicker border
+            console.log(`✅ Applied selection style to shape ${index + 1}`);
+          }
+          this.selectedShape = shape;
+        }
+      });
+
+      this.layer.batchDraw();
+      console.log(`✅ Device selected with visual feedback: ${device.metadata.name}`);
+    } else {
+      console.log(`❌ No shapes found for device ${device.id} - cannot apply visual selection`);
+    }
+
     this.cdr.detectChanges();
-
-    console.log(`✅ Device selected with visual feedback: ${device.metadata.name}`);
   }
 
   private drawGrid(): void {
@@ -3318,6 +3368,91 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     console.log('  Pan Position:', editorState.pan.position);
 
     console.log('='.repeat(50));
+  }
+
+  /**
+ * Debug device finding specifically
+ */
+  debugDeviceFinding(): void {
+    console.log('🐛 Device Finding Debug:');
+
+    const project = this.projectState.getCurrentProject();
+    if (!project?.devices?.length) {
+      console.log('❌ No devices in project');
+      return;
+    }
+
+    console.log(`📊 Project has ${project.devices.length} devices`);
+
+    // Check each device individually
+    project.devices.forEach((device: any, index: number) => {
+      console.log(`\n🔍 Device ${index + 1}: ${device.metadata.name} (${device.id})`);
+
+      // Method 1: Find by class name
+      const allDevices = this.layer?.find('.device') || [];
+      console.log(`  All devices on layer: ${allDevices.length}`);
+
+      // Method 2: Find by deviceId attribute
+      const deviceById = this.layer?.find(`[deviceId=${device.id}]`) || [];
+      console.log(`  Found by deviceId: ${deviceById.length}`);
+
+      // Method 3: Manual search through all children
+      const allChildren = this.layer?.children || [];
+      const manualFound = allChildren.filter((child: any) => {
+        const childDeviceId = child.getAttr('deviceId');
+        return childDeviceId === device.id;
+      });
+      console.log(`  Found manually: ${manualFound.length}`);
+
+      // Check attributes of found shapes
+      if (deviceById.length > 0) {
+        deviceById.forEach((shape: any, shapeIndex: number) => {
+          console.log(`    Shape ${shapeIndex + 1}:`);
+          console.log(`      Class: ${shape.getClassName()}`);
+          console.log(`      Name: ${shape.name()}`);
+          console.log(`      DeviceId: ${shape.getAttr('deviceId')}`);
+          console.log(`      Listening: ${shape.listening()}`);
+          console.log(`      Visible: ${shape.visible()}`);
+        });
+      }
+    });
+  }
+
+  /**
+   * Debug layer objects
+   */
+  debugLayerObjects(): void {
+    console.log('🐛 Layer Objects Debug:');
+
+    const allChildren = this.layer?.children || [];
+    console.log(`📊 Total objects on layer: ${allChildren.length}`);
+
+    // Group by class name
+    const objectsByClass: Record<string, number> = {};
+    const objectsByName: Record<string, number> = {};
+
+    allChildren.forEach((child: any) => {
+      const className = child.getClassName();
+      const name = child.name() || 'unnamed';
+
+      objectsByClass[className] = (objectsByClass[className] || 0) + 1;
+      objectsByName[name] = (objectsByName[name] || 0) + 1;
+    });
+
+    console.log('📊 Objects by class:', objectsByClass);
+    console.log('📊 Objects by name:', objectsByName);
+
+    // Look for device objects specifically
+    const deviceLikeObjects = allChildren.filter((child: any) => {
+      const name = child.name();
+      const deviceId = child.getAttr('deviceId');
+      return name === 'device' || deviceId;
+    });
+
+    console.log(`🎯 Device-like objects: ${deviceLikeObjects.length}`);
+    deviceLikeObjects.forEach((obj: any, index: number) => {
+      console.log(`  ${index + 1}: ${obj.getClassName()} - ${obj.name()} - deviceId: ${obj.getAttr('deviceId')}`);
+    });
   }
   /**
    * Quick test device selection - ENHANCED
