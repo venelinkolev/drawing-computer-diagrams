@@ -1689,10 +1689,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (result.success) {
       console.log('🔗 AppComponent: Connection mode activated');
 
-      // ➕ Set cursor immediately when entering connection mode
-      this.stage.container().style.cursor = 'crosshair';
+      // ✅ FORCE cursor update
+      if (this.stage && this.stage.container()) {
+        this.stage.container().style.cursor = 'crosshair';
+        console.log('🎯 Cursor FORCED to crosshair');
+      }
 
-      // ➕ Re-render devices to disable dragging
+      // Re-render devices to disable dragging
       const project = this.projectState.getCurrentProject();
       if (project) {
         this.renderProjectOnCanvas(project);
@@ -1793,7 +1796,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     console.log(`🏁 Finishing connection to device: ${endDevice.metadata.name}`);
 
-    // finishDrawing връща ConnectionCreationResult - това е OK
+    // ✅ Create connection via ConnectionService
     const result = this.connectionService.finishDrawing(
       endDevice,
       endPoint,
@@ -1801,16 +1804,40 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.projectState
     );
 
-    if (result.success) {
-      console.log('✅ Connection created successfully:', result.connection?.id);
+    if (result.success && result.connection) {
+      console.log('✅ Connection created successfully:', result.connection.id);
+
+      // ✅ PERFORMANCE FIX: Add to project WITHOUT triggering excessive re-renders
+      try {
+        // Get current project
+        const currentProject = this.projectState.getCurrentProject();
+        if (currentProject) {
+          // ➕ IMPORTANT: Check if connection already exists
+          const existingConnection = currentProject.connections.find(c => c.id === result.connection!.id);
+
+          if (!existingConnection) {
+            this.projectState.addConnection(result.connection);
+            console.log(`📁 Connection added to project: ${result.connection.id}`);
+            console.log(`📊 Total connections now: ${currentProject.connections.length + 1}`);
+          } else {
+            console.log('⚠️ Connection already exists in project');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to add connection to project:', error);
+      }
     } else {
       console.error('❌ Failed to create connection:', result.error);
     }
 
     this.isDrawingConnection = false;
 
-    // Reset cursor
-    this.stage.container().style.cursor = 'default';
+    // Reset cursor properly
+    if (this.stage) {
+      const editorState = this.editorState.getCurrentState();
+      const cursor = editorState.interaction.mode === 'connect' ? 'crosshair' : 'default';
+      this.stage.container().style.cursor = cursor;
+    }
   }
 
   /**
@@ -1825,41 +1852,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     console.log(`  🎯 Most Connected:`, analytics.mostConnectedDevice);
     console.log(`  📈 Connection Density: ${analytics.connectionDensity.toFixed(2)}`);
     console.log(`  🔍 Topology:`, analytics.topologyAnalysis);
-  }
-
-  /**
-   * Test connection creation
-   */
-  testConnectionCreation(): void {
-    console.log('🧪 Testing connection creation...');
-
-    const project = this.projectState.getCurrentProject();
-    if (!project || project.devices.length < 2) {
-      console.warn('⚠️ Need at least 2 devices to test connections');
-      return;
-    }
-
-    // Create test connection between first two devices
-    const device1 = project.devices[0];
-    const device2 = project.devices[1];
-
-    const request = {
-      sourceDeviceId: device1.id,
-      targetDeviceId: device2.id,
-      connectionType: 'ethernet' as any,
-      metadata: {
-        name: `Test Connection ${Date.now()}`,
-        description: 'Test connection created via ConnectionService'
-      }
-    };
-
-    const result = this.connectionService.createConnection(request, this.projectState);
-
-    if (result.success) {
-      console.log('✅ Test connection created:', result.connection?.id);
-    } else {
-      console.error('❌ Test connection failed:', result.error);
-    }
   }
 
   // === NEW: CONNECTION MOUSE HANDLING ===
@@ -1999,39 +1991,55 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private renderSingleConnection(connection: any): void {
     if (!this.layer || !connection.points || connection.points.length < 2) return;
 
+    console.log(`🎨 Rendering connection: ${connection.id}, style:`, connection.visualStyle?.style);
+
     // Flatten points array for Konva
     const points: number[] = [];
     connection.points.forEach((point: Point) => {
       points.push(point.x, point.y);
     });
 
-    // ✅ FIXED: Use connection.visualStyle (connections have visualStyle, devices have style)
+    // ✅ FIXED: Force solid line for connections (unless explicitly dashed)
+    const connectionStyle = connection.visualStyle?.style;
+    const shouldBeDashed = connectionStyle === 'dashed' || connectionStyle === 'dotted';
+
+    console.log(`🎨 Connection ${connection.id} - shouldBeDashed: ${shouldBeDashed}, style: ${connectionStyle}`);
+
     const line = new Konva.Line({
       points: points,
       stroke: connection.visualStyle?.stroke || '#4CAF50',
       strokeWidth: connection.visualStyle?.strokeWidth || 3,
       lineCap: 'round',
       lineJoin: 'round',
-      dash: connection.visualStyle?.style === 'dashed' ? [10, 5] : undefined,
+      dash: shouldBeDashed ? [10, 5] : [], // ✅ FIXED: Empty array for solid, not undefined
       opacity: connection.visualStyle?.opacity || 1,
       name: 'connection',
       id: connection.id,
       connectionId: connection.id
     });
 
-    // Add selection handling
-    line.on('click', () => {
+    // Enhanced selection handling
+    line.on('click', (e) => {
+      console.log(`🎯 Connection clicked: ${connection.id}`);
       this.selectConnection(connection);
+      e.cancelBubble = true;
     });
 
     line.on('mouseenter', () => {
       line.stroke('#FFC107'); // Hover color
+      this.stage.container().style.cursor = 'pointer';
       this.layer.batchDraw();
     });
 
     line.on('mouseleave', () => {
       const isSelected = this.selectedConnections.some((c: any) => c.id === connection.id);
       line.stroke(isSelected ? '#2196F3' : connection.visualStyle?.stroke || '#4CAF50');
+
+      // Reset cursor based on current mode
+      const editorState = this.editorState.getCurrentState();
+      const cursor = editorState.interaction.mode === 'connect' ? 'crosshair' : 'default';
+      this.stage.container().style.cursor = cursor;
+
       this.layer.batchDraw();
     });
 
@@ -2046,6 +2054,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (connection.visualStyle?.showLabel && connection.metadata?.name) {
       this.addConnectionLabel(connection, points);
     }
+
+    console.log(`✅ Connection rendered: ${connection.id}`);
   }
 
   /**
@@ -2168,17 +2178,24 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   private selectConnection(connection: any): void {
     console.log(`🎯 Connection selected: ${connection.id}`);
 
+    // ➕ ENHANCED: Clear device selection when selecting connection
+    if (this.selectedDevice) {
+      this.clearSelectionSafe();
+    }
+
     // Update ConnectionService selection
     this.connectionService.selectConnection(connection.id);
 
-    // Update visual appearance
+    // ➕ ENHANCED: Visual feedback for selected connection
     const connectionLines = this.layer.find(`#${connection.id}`);
     connectionLines.forEach((line: any) => {
-      line.stroke('#2196F3'); // Selection color
-      line.strokeWidth((connection.visualStyle?.strokeWidth || 3) + 1);
+      this.setStroke(line, '#2196F3'); // Selection color
+      this.setStrokeWidth(line, (connection.visualStyle?.strokeWidth || 3) + 1);
     });
 
     this.layer.batchDraw();
+
+    console.log('✅ Connection selected with visual feedback');
   }
 
   // === NEW: TEMPLATE INTERACTION METHODS ===
@@ -2448,16 +2465,20 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       return;
     }
 
-    console.log(`🎨 Rendering ${project.devices.length} devices on canvas...`);
+    console.log(`🎨 Rendering ${project.devices.length} devices and ${project.connections.length} connections on canvas...`);
 
-    // Clear existing devices
+    // ✅ PERFORMANCE: Clear existing objects efficiently
     const existingDevices = this.layer.find('.device');
-    console.log(`🧹 Removing ${existingDevices.length} existing devices`);
-    existingDevices.forEach(node => node.destroy());
+    const existingConnections = this.layer.find('.connection');
 
-    // Check if selected device still exists in project
+    console.log(`🧹 Removing ${existingDevices.length} devices and ${existingConnections.length} connections`);
+
+    existingDevices.forEach(node => node.destroy());
+    existingConnections.forEach(node => node.destroy());
+
+    // Check if selected device still exists
     if (this.selectedDevice) {
-      const deviceStillExists = project.devices.some((d: Device) => d.id === this.selectedDevice!.id);
+      const deviceStillExists = project.devices.some((d: any) => d.id === this.selectedDevice!.id);
       if (!deviceStillExists) {
         console.log('🔄 Selected device no longer exists, clearing selection');
         this.selectedDevice = null;
@@ -2466,18 +2487,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       }
     }
 
-    // Render all devices
-    project.devices.forEach((device: Device, index: number) => {
+    // ✅ PERFORMANCE: Batch render devices
+    project.devices.forEach((device: any, index: number) => {
       console.log(`🎯 Rendering device ${index + 1}:`, device.metadata.name, 'at', device.position);
       this.renderDevice(device);
     });
 
+    // ✅ PERFORMANCE: Batch render connections
+    console.log(`🔗 Rendering ${project.connections.length} connections...`);
     this.renderConnections(project.connections);
 
-    console.log('✅ Canvas rendering completed');
-
+    // ✅ PERFORMANCE: Single batch draw at the end
     this.layer.batchDraw();
-    console.log('✅ Canvas render complete');
+    console.log('✅ Canvas rendering completed with single batch draw');
   }
 
   private renderDevice(device: any): void {
@@ -2491,7 +2513,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       name: 'device'
     });
 
-    // ✅ FIXED: Use device.style instead of device.visualStyle
     const deviceImage = new Konva.Rect({
       width: 60,
       height: 60,
@@ -2502,7 +2523,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       deviceId: device.id
     });
 
-    // Create device label
     const deviceLabel = new Konva.Text({
       x: -10,
       y: 65,
@@ -2518,53 +2538,92 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     deviceGroup.add(deviceImage);
     deviceGroup.add(deviceLabel);
 
-    // ➕ CONDITIONAL DRAGGING: Only enable drag when NOT in connection mode
     const editorState = this.editorState.getCurrentState();
     const isConnectionMode = editorState.interaction.mode === 'connect';
 
     if (!isConnectionMode) {
-      // Enable dragging only when not in connection mode
+      // ✅ SELECT MODE with OPTIMIZED drag handling
       deviceGroup.draggable(true);
 
-      deviceGroup.on('dragstart', () => {
+      // ➕ ENHANCED: Selection on click
+      deviceGroup.on('click', (e) => {
+        console.log(`🎯 Device clicked in SELECT mode: ${device.metadata.name}`);
+        this.handleDeviceSelectionSafe(device);
+        e.cancelBubble = true;
+      });
+
+      // ✅ PERFORMANCE FIX: Optimized drag handling WITHOUT constant re-rendering
+      let originalPosition: Point;
+      let isDraggingDevice = false;
+
+      deviceGroup.on('dragstart', (e) => {
+        originalPosition = { ...device.position };
+        isDraggingDevice = true;
         console.log(`🎯 Device drag started: ${device.metadata.name}`);
+        e.cancelBubble = true;
       });
 
-      deviceGroup.on('dragmove', () => {
+      deviceGroup.on('dragmove', (e) => {
+        if (!isDraggingDevice) return;
+
+        // ✅ PERFORMANCE FIX: Only update position locally, NOT project state during drag
         const newPosition = deviceGroup.position();
-        // ✅ FIXED: Use updateDevice instead of updateDevicePosition
-        this.projectState.updateDevice(device.id, { position: newPosition });
+        console.log(`🔄 Device dragging to: (${newPosition.x}, ${newPosition.y})`);
+        e.cancelBubble = true;
       });
 
-      deviceGroup.on('dragend', () => {
+      deviceGroup.on('dragend', (e) => {
+        if (!isDraggingDevice) return;
+
         const finalPosition = deviceGroup.position();
-        console.log(`🎯 Device drag ended: ${device.metadata.name} at (${finalPosition.x}, ${finalPosition.y})`);
+        isDraggingDevice = false;
+
+        console.log(`🏁 Device drag ended: ${device.metadata.name} at (${finalPosition.x}, ${finalPosition.y})`);
+
+        // ✅ PERFORMANCE FIX: Update project state and create undo command ONLY at the end
+        if (originalPosition) {
+          // Update project state once
+          this.projectState.updateDevice(device.id, { position: finalPosition });
+
+          // Create undo command
+          const moveCommand = this.undoRedoService.createMoveDeviceCommand(
+            device.id,
+            finalPosition,
+            originalPosition,
+            this.projectState
+          );
+          this.undoRedoService.executeCommand(moveCommand);
+        }
+
+        e.cancelBubble = true;
       });
+
+      // Cursor management
+      deviceGroup.on('mouseenter', () => {
+        this.stage.container().style.cursor = 'move';
+      });
+
+      deviceGroup.on('mouseleave', () => {
+        this.stage.container().style.cursor = 'default';
+      });
+
     } else {
-      // In connection mode, disable dragging and change cursor
+      // CONNECTION MODE
       deviceGroup.draggable(false);
+
       deviceGroup.on('mouseenter', () => {
         this.stage.container().style.cursor = 'crosshair';
       });
+
       deviceGroup.on('mouseleave', () => {
         if (!this.isDrawingConnection) {
-          this.stage.container().style.cursor = 'default';
+          this.stage.container().style.cursor = 'crosshair';
         }
       });
     }
 
-    // Add selection events (always enabled)
-    deviceGroup.on('click', (e) => {
-      if (!isConnectionMode) {
-        this.handleDeviceSelectionSafe(device);
-        e.cancelBubble = true; // Prevent stage click
-      }
-      // В connection mode, click events се обработват в addSelectionHandling
-    });
-
     this.layer.add(deviceGroup);
   }
-
   /**
  * Handle device selection - NEW method to replace missing selectDevice
  */
@@ -2577,14 +2636,18 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     // Set new selection
     this.selectedDevice = device;
 
-    // Find and highlight the device shape
+    // ✅ ENHANCED: Find and highlight the device shape
     const deviceShapes = this.layer.find(`[deviceId=${device.id}]`);
+    console.log(`🔍 Found ${deviceShapes.length} shapes for device ${device.id}`);
+
     deviceShapes.forEach((shape: any) => {
       if (shape instanceof Konva.Group) {
         const rect = this.getRectFromGroup(shape);
         if (rect) {
+          // ✅ ENHANCED: Make selection more visible
           this.setStroke(rect, '#FF9800'); // Orange selection color
-          this.setStrokeWidth(rect, 3);
+          this.setStrokeWidth(rect, 4); // Thicker border
+          console.log(`✅ Applied selection style to device ${device.id}`);
         }
         this.selectedShape = shape;
       }
@@ -2593,7 +2656,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.layer.batchDraw();
     this.cdr.detectChanges();
 
-    console.log(`✅ Device selected: ${device.metadata.name}`);
+    console.log(`✅ Device selected with visual feedback: ${device.metadata.name}`);
   }
 
   private drawGrid(): void {
@@ -2771,9 +2834,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         this.editorState.endDragPan(finalPosition, originalPanPosition, this.undoRedoService);
         console.log('🖐️ Pan drag ended with undo/redo support');
       } else if (editorState.interaction.mode === 'select' && !isDragging) {
+        // ✅ SELECT MODE: Handle selection logic
         if (e.target === this.stage) {
-          console.log('🔄 Clicked on stage - clearing selection');
+          console.log('🔄 Clicked on stage - clearing all selections');
           this.clearSelectionSafe();
+          // ➕ ENHANCED: Clear connection selections too
+          this.connectionService.clearSelection();
         } else if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
           console.log('🎯 Clicked on shape - selecting');
           this.selectShape(e.target as Konva.Shape);
@@ -2795,6 +2861,29 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   }
 
   /**
+ * Get current editor mode safely
+ */
+  private getCurrentMode(): string {
+    const editorState = this.editorState.getCurrentState();
+    return editorState.interaction.mode;
+  }
+
+  /**
+   * Is currently in connection mode
+   */
+  private isInConnectionMode(): boolean {
+    return this.getCurrentMode() === 'connect';
+  }
+
+  /**
+   * Is currently in select mode
+   */
+  private isInSelectMode(): boolean {
+    return this.getCurrentMode() === 'select';
+  }
+
+
+  /**
  * Set select mode with cursor reset
  */
   setSelectMode(): void {
@@ -2802,10 +2891,13 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (result.success) {
       console.log('🎯 AppComponent: Select mode activated');
 
-      // ➕ Reset cursor when leaving connection mode
-      this.stage.container().style.cursor = 'default';
+      // ✅ FORCE cursor reset
+      if (this.stage && this.stage.container()) {
+        this.stage.container().style.cursor = 'default';
+        console.log('🎯 Cursor FORCED to default');
+      }
 
-      // ➕ Re-render devices to enable dragging
+      // Re-render devices to enable dragging
       const project = this.projectState.getCurrentProject();
       if (project) {
         this.renderProjectOnCanvas(project);
@@ -3091,23 +3183,421 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     if (this.selectedShape) {
       console.log('  Shape DeviceId:', this.selectedShape.getAttr('deviceId'));
-      console.log('  Is Group:', this.isKonvaGroup(this.selectedShape));
+      console.log('  Is Group:', this.selectedShape instanceof Konva.Group);
 
-      if (this.isKonvaGroup(this.selectedShape)) {
+      if (this.selectedShape instanceof Konva.Group) {
         const rect = this.getRectFromGroup(this.selectedShape);
         console.log('  Has Rect Child:', !!rect);
         if (rect) {
-          console.log('  Rect Stroke:', rect.stroke());
-          console.log('  Rect Stroke Width:', rect.strokeWidth());
+          console.log('  Rect Stroke:', (rect as any).stroke());
+          console.log('  Rect Stroke Width:', (rect as any).strokeWidth());
         }
       }
     }
 
     const project = this.projectState.getCurrentProject();
-    console.log('  Total Devices:', project?.devices?.length || 0);
+    console.log('  Total Devices in Project:', project?.devices?.length || 0);
 
-    if (project?.devices!?.length > 0) {
-      console.log('  First Device Style:', project!.devices[0].style);
+    // ✅ ENHANCED: Check devices on canvas
+    if (this.layer) {
+      const devicesOnCanvas = this.layer.find('.device');
+      console.log('  Devices on Canvas:', devicesOnCanvas.length);
+
+      devicesOnCanvas.forEach((deviceGroup: any, index: number) => {
+        const deviceId = deviceGroup.getAttr('deviceId');
+        const device = this.projectState.getDevice(deviceId);
+        console.log(`    Device ${index + 1}: ${device?.metadata?.name || 'Unknown'} (${deviceId})`);
+      });
+    }
+  }
+
+  /**
+ * Debug connection state
+ */
+  debugConnectionState(): void {
+    const project = this.projectState.getCurrentProject();
+    console.log('🐛 Connection State Debug:');
+    console.log('  Project Connections:', project?.connections?.length || 0);
+
+    // ✅ FIXED: Use component property instead of .value
+    console.log('  Component Connections Array:', this.currentConnections.length);
+    console.log('  Selected Connections:', this.selectedConnections.length);
+    console.log('  Is Drawing:', this.isDrawingConnection);
+    console.log('  Current Drawing State:', this.currentDrawingState);
+
+    if (project?.connections) {
+      project.connections.forEach((conn: any, index: number) => {
+        console.log(`  Connection ${index + 1}:`, {
+          id: conn.id,
+          style: conn.visualStyle?.style,
+          stroke: conn.visualStyle?.stroke,
+          points: conn.points?.length,
+          sourceDevice: conn.sourceDeviceId,
+          targetDevice: conn.targetDeviceId
+        });
+      });
+    }
+  }
+
+  /**
+   * Debug rendering performance
+   */
+  debugRenderingPerformance(): void {
+    console.log('🐛 Rendering Performance Debug:');
+    console.log('  Layer objects:', this.layer?.children?.length || 0);
+    console.log('  Devices on layer:', this.layer?.find('.device')?.length || 0);
+    console.log('  Connections on layer:', this.layer?.find('.connection')?.length || 0);
+    console.log('  Connection previews on layer:', this.layer?.find('.connection-preview')?.length || 0);
+    console.log('  Selected shape:', this.selectedShape?.getClassName() || 'None');
+    console.log('  Selected device:', this.selectedDevice?.metadata?.name || 'None');
+
+    // ✅ ENHANCED: Check for duplicate objects
+    const allObjects = this.layer?.children || [];
+    const deviceIds = new Set();
+    const connectionIds = new Set();
+
+    allObjects.forEach(obj => {
+      const deviceId = obj.getAttr('deviceId');
+      const connectionId = obj.getAttr('connectionId');
+
+      if (deviceId) deviceIds.add(deviceId);
+      if (connectionId) connectionIds.add(connectionId);
+    });
+
+    console.log('  Unique Device IDs on canvas:', deviceIds.size);
+    console.log('  Unique Connection IDs on canvas:', connectionIds.size);
+  }
+
+  /**
+ * Debug current mode - ENHANCED
+ */
+  debugCurrentMode(): void {
+    const editorState = this.editorState.getCurrentState();
+    console.log('🐛 Current Mode Debug:');
+    console.log('  Editor Mode:', editorState.interaction.mode);
+    console.log('  Is Drawing Connection:', this.isDrawingConnection);
+    console.log('  Selected Device:', this.selectedDevice?.metadata?.name || 'None');
+    console.log('  Selected Connections:', this.selectedConnections.length);
+    console.log('  Current Cursor:', this.stage?.container()?.style?.cursor || 'unknown');
+    console.log('  Stage exists:', !!this.stage);
+    console.log('  Layer exists:', !!this.layer);
+  }
+
+  /**
+ * Comprehensive debug method - Debug everything at once
+ */
+  debugEverything(): void {
+    console.log('🐛🐛🐛 COMPREHENSIVE DEBUG REPORT 🐛🐛🐛');
+    console.log('='.repeat(50));
+
+    this.debugCurrentMode();
+    console.log('');
+
+    this.debugDeviceSelection();
+    console.log('');
+
+    this.debugConnectionState();
+    console.log('');
+
+    this.debugRenderingPerformance();
+    console.log('');
+
+    // ✅ FIXED: Properly get editorState
+    const project = this.projectState.getCurrentProject();
+    const editorState = this.editorState.getCurrentState(); // ➕ ДОБАВЕНО
+
+    console.log('🐛 System State:');
+    console.log('  Project ID:', project?.id || 'None');
+    console.log('  Project Title:', project?.metadata?.title || 'None');
+    console.log('  Canvas Size:', {
+      width: this.stage?.width() || 0,
+      height: this.stage?.height() || 0
+    });
+    // ✅ FIXED: Now editorState is properly defined
+    console.log('  Zoom Level:', Math.round((editorState.zoom.level || 1) * 100) + '%');
+    console.log('  Pan Position:', editorState.pan.position);
+
+    console.log('='.repeat(50));
+  }
+  /**
+   * Quick test device selection - ENHANCED
+   */
+  testDeviceSelection(): void {
+    const project = this.projectState.getCurrentProject();
+    if (project!?.devices?.length > 0) {
+      const firstDevice = project!.devices[0];
+      console.log('🧪 Testing device selection with:', firstDevice.metadata.name);
+      console.log('  Before selection - Selected device:', this.selectedDevice?.metadata?.name || 'None');
+
+      this.handleDeviceSelectionSafe(firstDevice);
+
+      // Check after selection
+      setTimeout(() => {
+        console.log('  After selection - Selected device:', this.selectedDevice?.metadata?.name || 'None');
+        console.log('  Visual selection applied:', !!this.selectedShape);
+      }, 100);
+    } else {
+      console.log('⚠️ No devices to test selection');
+    }
+  }
+
+  /**
+   * Quick test cursor changes - ENHANCED
+   */
+  testCursorChanges(): void {
+    console.log('🧪 Testing cursor changes...');
+
+    // Test connection mode
+    console.log('  🔗 Setting connection mode...');
+    this.setConnectionMode();
+
+    setTimeout(() => {
+      const currentCursor1 = this.stage?.container()?.style?.cursor;
+      console.log('  Current cursor after connection mode:', currentCursor1);
+      console.log('  Expected: crosshair, Actual:', currentCursor1, currentCursor1 === 'crosshair' ? '✅' : '❌');
+
+      // Test select mode
+      console.log('  🎯 Setting select mode...');
+      this.setSelectMode();
+
+      setTimeout(() => {
+        const currentCursor2 = this.stage?.container()?.style?.cursor;
+        console.log('  Current cursor after select mode:', currentCursor2);
+        console.log('  Expected: default, Actual:', currentCursor2, currentCursor2 === 'default' ? '✅' : '❌');
+      }, 100);
+    }, 100);
+  }
+
+  /**
+ * Test device dragging specifically
+ */
+  testDeviceDragging(): void {
+    console.log('🧪 Testing device dragging...');
+
+    const project = this.projectState.getCurrentProject();
+    if (!project?.devices?.length) {
+      console.log('❌ No devices to test dragging');
+      return;
+    }
+
+    const device = project.devices[0];
+    console.log('  Testing with device:', device.metadata.name);
+    console.log('  Current position:', device.position);
+    console.log('  Device on canvas:', !!this.layer?.find(`[deviceId=${device.id}]`)?.length);
+
+    // Check if device is draggable
+    const deviceShapes = this.layer?.find(`[deviceId=${device.id}]`) || [];
+    deviceShapes.forEach((shape: any) => {
+      if (shape instanceof Konva.Group) {
+        console.log('  Device draggable:', shape.draggable());
+        console.log('  Device listening:', shape.listening());
+      }
+    });
+  }
+
+  /**
+   * Test connection creation process
+   */
+  testConnectionCreation(): void {
+    console.log('🧪 Testing connection creation process...');
+
+    const project = this.projectState.getCurrentProject();
+    if (!project?.devices?.length || project.devices.length < 2) {
+      console.log('❌ Need at least 2 devices to test connections');
+      return;
+    }
+
+    console.log('  Current connections:', project.connections.length);
+
+    // ✅ FIXED: Remove .value and use alternative check
+    console.log('  Connection service exists:', !!this.connectionService);
+    console.log('  Drawing state exists:', !!this.currentDrawingState);
+    console.log('  Is drawing connection:', this.isDrawingConnection);
+
+    // ✅ ENHANCED: Check service state through editor
+    const editorState = this.editorState.getCurrentState();
+    console.log('  Current editor mode:', editorState.interaction.mode);
+    console.log('  Can create connections:', editorState.interaction.mode === 'connect');
+
+    // Check if devices are properly set up for connections
+    project.devices.slice(0, 2).forEach((device: any, index: number) => {
+      console.log(`  Device ${index + 1}: ${device.metadata.name}`);
+      console.log(`    Position: (${device.position.x}, ${device.position.y})`);
+      console.log(`    On canvas: ${!!this.layer?.find(`[deviceId=${device.id}]`)?.length}`);
+
+      // ✅ ENHANCED: Check device interaction setup
+      const deviceShapes = this.layer?.find(`[deviceId=${device.id}]`) || [];
+      deviceShapes.forEach((shape: any) => {
+        if (shape instanceof Konva.Group) {
+          console.log(`    Device ${index + 1} draggable: ${shape.draggable()}`);
+          console.log(`    Device ${index + 1} listening: ${shape.listening()}`);
+        }
+      });
+    });
+  }
+
+
+  /**
+   * Test connection styling
+   */
+  testConnectionStyling(): void {
+    console.log('🧪 Testing connection styling...');
+
+    const project = this.projectState.getCurrentProject();
+    if (!project?.connections?.length) {
+      console.log('❌ No connections to test styling');
+      return;
+    }
+
+    project.connections.forEach((connection: any, index: number) => {
+      console.log(`  Connection ${index + 1}: ${connection.id}`);
+      console.log(`    Visual style:`, connection.visualStyle);
+      console.log(`    Style type:`, connection.visualStyle?.style);
+      console.log(`    Should be dashed:`, connection.visualStyle?.style === 'dashed');
+
+      // Check on canvas
+      const connectionLines = this.layer?.find(`#${connection.id}`) || [];
+      console.log(`    Lines on canvas: ${connectionLines.length}`);
+
+      connectionLines.forEach((line: any) => {
+        console.log(`      Line dash:`, (line as any).dash());
+        console.log(`      Line stroke:`, (line as any).stroke());
+      });
+    });
+  }
+
+
+  /**
+   * Run all tests automatically
+   */
+  runAllTests(): void {
+    console.log('🧪🧪🧪 RUNNING AUTOMATED TEST SUITE 🧪🧪🧪');
+    console.log('='.repeat(60));
+
+    // Test 1: Device Selection
+    console.log('📋 Test 1: Device Selection');
+    this.testDeviceSelection();
+
+    setTimeout(() => {
+      // Test 2: Cursor Management  
+      console.log('📋 Test 2: Cursor Management');
+      this.testCursorChanges();
+
+      setTimeout(() => {
+        // Test 3: Device Dragging
+        console.log('📋 Test 3: Device Dragging');
+        this.testDeviceDragging();
+
+        setTimeout(() => {
+          // Test 4: Connection Creation
+          console.log('📋 Test 4: Connection Creation');
+          this.testConnectionCreation();
+
+          setTimeout(() => {
+            // Test 5: Connection Styling
+            console.log('📋 Test 5: Connection Styling');
+            this.testConnectionStyling();
+
+            setTimeout(() => {
+              console.log('='.repeat(60));
+              console.log('✅ AUTOMATED TEST SUITE COMPLETED');
+              console.log('📊 Check above results for any ❌ failures');
+            }, 200);
+          }, 300);
+        }, 300);
+      }, 600);
+    }, 300);
+  }
+
+  // === QUICK Problem-Specific Tests ===
+
+  /**
+   * Quick test for Problem 1: Device Selection & Dragging
+   */
+  testProblem1(): void {
+    console.log('🎯 PROBLEM 1 TEST: Device Selection & Dragging');
+    console.log('-'.repeat(40));
+
+    const editorState = this.editorState.getCurrentState();
+    console.log('✓ Current mode:', editorState.interaction.mode);
+    console.log('✓ Expected for selection: select');
+
+    if (editorState.interaction.mode !== 'select') {
+      console.log('❌ Switch to SELECT mode first!');
+      this.setSelectMode();
+    }
+
+    this.testDeviceSelection();
+    setTimeout(() => {
+      this.testDeviceDragging();
+    }, 200);
+  }
+
+  /**
+   * Quick test for Problems 2,3,4: Connection Issues  
+   */
+  testProblems234(): void {
+    console.log('🎯 PROBLEMS 2,3,4 TEST: Connection Issues');
+    console.log('-'.repeat(40));
+
+    const editorState = this.editorState.getCurrentState();
+    console.log('✓ Current mode:', editorState.interaction.mode);
+
+    this.testConnectionCreation();
+    setTimeout(() => {
+      this.testConnectionStyling();
+    }, 200);
+  }
+
+  /**
+   * Quick test for Problem 5: Cursor Management
+   */
+  testProblem5(): void {
+    console.log('🎯 PROBLEM 5 TEST: Cursor Management');
+    console.log('-'.repeat(40));
+
+    this.testCursorChanges();
+  }
+
+  // === VISUAL Feedback Test ===
+
+  /**
+   * Test visual feedback on canvas
+   */
+  testVisualFeedback(): void {
+    console.log('🎨 Testing visual feedback...');
+
+    const project = this.projectState.getCurrentProject();
+    if (!project) {
+      console.log('❌ No project loaded');
+      return;
+    }
+
+    console.log('📊 Canvas Objects Summary:');
+    console.log('  Total children on layer:', this.layer?.children?.length || 0);
+    console.log('  Devices on canvas:', this.layer?.find('.device')?.length || 0);
+    console.log('  Connections on canvas:', this.layer?.find('.connection')?.length || 0);
+    console.log('  Preview connections:', this.layer?.find('.connection-preview')?.length || 0);
+
+    console.log('📊 Project Data Summary:');
+    console.log('  Devices in project:', project.devices?.length || 0);
+    console.log('  Connections in project:', project.connections?.length || 0);
+
+    // Check for mismatches
+    const canvasDevices = this.layer?.find('.device')?.length || 0;
+    const projectDevices = project.devices?.length || 0;
+    const canvasConnections = this.layer?.find('.connection')?.length || 0;
+    const projectConnections = project.connections?.length || 0;
+
+    console.log('🔍 Data Consistency Check:');
+    console.log('  Devices match:', canvasDevices === projectDevices ? '✅' : '❌');
+    console.log('  Connections match:', canvasConnections === projectConnections ? '✅' : '❌');
+
+    if (canvasDevices !== projectDevices) {
+      console.log(`    Canvas: ${canvasDevices}, Project: ${projectDevices}`);
+    }
+    if (canvasConnections !== projectConnections) {
+      console.log(`    Canvas: ${canvasConnections}, Project: ${projectConnections}`);
     }
   }
 
