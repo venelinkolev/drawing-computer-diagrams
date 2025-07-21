@@ -932,7 +932,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   // Konva objects
   private stage!: Konva.Stage;
   private layer!: Konva.Layer;
-  private selectedShape: Konva.Shape | null = null;
+  private selectedShape: Konva.Shape | Konva.Group | null = null;
 
   // Component state
   selectedDevice: Device | null = null;
@@ -1446,7 +1446,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       );
 
       // Clear selection FIRST before executing command
-      this.clearSelection();
+      this.clearSelectionSafe();
 
       // Execute command
       this.undoRedoService.executeCommand(command);
@@ -2005,7 +2005,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       points.push(point.x, point.y);
     });
 
-    // Create connection line
+    // ✅ FIXED: Use connection.visualStyle (connections have visualStyle, devices have style)
     const line = new Konva.Line({
       points: points,
       stroke: connection.visualStyle?.stroke || '#4CAF50',
@@ -2030,7 +2030,6 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     });
 
     line.on('mouseleave', () => {
-      // FIXED: Use proper observable pattern
       const isSelected = this.selectedConnections.some((c: any) => c.id === connection.id);
       line.stroke(isSelected ? '#2196F3' : connection.visualStyle?.stroke || '#4CAF50');
       this.layer.batchDraw();
@@ -2488,19 +2487,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     const deviceGroup = new Konva.Group({
       x: device.position.x,
       y: device.position.y,
-      deviceId: device.id, // ➕ ВАЖНО: Добави deviceId атрибут
+      deviceId: device.id,
       name: 'device'
     });
 
-    // Create device image
+    // ✅ FIXED: Use device.style instead of device.visualStyle
     const deviceImage = new Konva.Rect({
       width: 60,
       height: 60,
-      fill: device.visualStyle?.backgroundColor || '#2196F3',
-      stroke: device.visualStyle?.borderColor || '#1976D2',
-      strokeWidth: 2,
-      cornerRadius: 8,
-      deviceId: device.id // ➕ ВАЖНО: Добави deviceId атрибут и тук
+      fill: device.style?.fill || '#2196F3',
+      stroke: device.style?.stroke || '#1976D2',
+      strokeWidth: device.style?.strokeWidth || 2,
+      cornerRadius: device.style?.cornerRadius || 8,
+      deviceId: device.id
     });
 
     // Create device label
@@ -2557,8 +2556,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     // Add selection events (always enabled)
     deviceGroup.on('click', (e) => {
       if (!isConnectionMode) {
-        // ✅ FIXED: Use proper device selection logic
-        this.handleDeviceSelection(device);
+        this.handleDeviceSelectionSafe(device);
         e.cancelBubble = true; // Prevent stage click
       }
       // В connection mode, click events се обработват в addSelectionHandling
@@ -2570,11 +2568,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   /**
  * Handle device selection - NEW method to replace missing selectDevice
  */
-  private handleDeviceSelection(device: any): void {
+  private handleDeviceSelectionSafe(device: any): void {
     console.log(`🎯 Selecting device: ${device.metadata.name}`);
 
     // Clear previous selection
-    this.clearSelection();
+    this.clearSelectionSafe();
 
     // Set new selection
     this.selectedDevice = device;
@@ -2582,12 +2580,11 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     // Find and highlight the device shape
     const deviceShapes = this.layer.find(`[deviceId=${device.id}]`);
     deviceShapes.forEach((shape: any) => {
-      if (shape.getClassName() === 'Group') {
-        // Highlight device group
-        const rect = shape.findOne('Rect');
+      if (shape instanceof Konva.Group) {
+        const rect = this.getRectFromGroup(shape);
         if (rect) {
-          rect.stroke('#FF9800'); // Orange selection color
-          rect.strokeWidth(3);
+          this.setStroke(rect, '#FF9800'); // Orange selection color
+          this.setStrokeWidth(rect, 3);
         }
         this.selectedShape = shape;
       }
@@ -2776,7 +2773,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       } else if (editorState.interaction.mode === 'select' && !isDragging) {
         if (e.target === this.stage) {
           console.log('🔄 Clicked on stage - clearing selection');
-          this.clearSelection();
+          this.clearSelectionSafe();
         } else if (e.target instanceof Konva.Shape || e.target instanceof Konva.Group) {
           console.log('🎯 Clicked on shape - selecting');
           this.selectShape(e.target as Konva.Shape);
@@ -2966,7 +2963,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (deviceId) {
       const device = this.projectState.getDevice(deviceId);
       if (device) {
-        this.handleDeviceSelection(device);
+        this.handleDeviceSelectionSafe(device);
       } else {
         console.warn('⚠️ Device not found for shape selection:', deviceId);
       }
@@ -2975,24 +2972,30 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     }
   }
 
-  private clearSelection(): void {
+  private clearSelectionSafe(): void {
     if (this.selectedShape) {
-      // Reset visual selection
-      const rect = this.selectedShape.findOne('Rect');
-      if (rect) {
-        // Get device to restore original colors
-        const deviceId = this.selectedShape.getAttr('deviceId');
-        const device = this.projectState.getDevice(deviceId);
+      if (this.selectedShape instanceof Konva.Group) {
+        const rect = this.getRectFromGroup(this.selectedShape);
+        if (rect) {
+          // Get device to restore original colors
+          const deviceId = this.selectedShape.getAttr('deviceId');
+          const device = this.projectState.getDevice(deviceId);
 
-        if (device) {
-          rect.stroke(device.visualStyle?.borderColor || '#1976D2');
-          rect.strokeWidth(2);
-        } else {
-          // Fallback colors
-          rect.stroke('#1976D2');
-          rect.strokeWidth(2);
+          if (device) {
+            this.setStroke(rect, device.style?.stroke || '#1976D2');
+            this.setStrokeWidth(rect, device.style?.strokeWidth || 2);
+          } else {
+            // Fallback colors
+            this.setStroke(rect, '#1976D2');
+            this.setStrokeWidth(rect, 2);
+          }
         }
+      } else {
+        // If it's a Shape, not a Group
+        this.setStroke(this.selectedShape, '#1976D2');
+        this.setStrokeWidth(this.selectedShape, 2);
       }
+
       this.selectedShape = null;
     }
 
@@ -3000,7 +3003,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.layer?.batchDraw();
     this.cdr.detectChanges();
 
-    console.log('🧹 Selection cleared');
+    console.log('🧹 Selection cleared safely');
   }
 
   private clearCanvas(): void {
@@ -3008,7 +3011,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       this.layer.destroyChildren();
       this.layer.batchDraw();
     }
-    this.clearSelection();
+    this.clearSelectionSafe();
   }
 
   toggleCanvasMode(): void {
@@ -3027,6 +3030,85 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     });
     this.drawGrid();
     this.layer.batchDraw();
+  }
+
+  /**
+ * Type-safe method to check if shape is Group
+ */
+  private isKonvaGroup(shape: any): shape is Konva.Group {
+    return shape instanceof Konva.Group;
+  }
+
+  /**
+   * Type-safe method to get rect from group
+   */
+  private getRectFromGroup(group: Konva.Group): Konva.Rect | undefined {
+    const rect = group.findOne('Rect');
+    return rect as Konva.Rect | undefined;
+  }
+
+  /**
+   * Type-safe device style access
+   */
+  private getDeviceStrokeColor(device: any): string {
+    return device.style?.stroke || '#1976D2';
+  }
+
+  private getDeviceStrokeWidth(device: any): number {
+    return device.style?.strokeWidth || 2;
+  }
+
+  private getDeviceFillColor(device: any): string {
+    return device.style?.fill || '#2196F3';
+  }
+
+  /**
+ * Type-safe method to set stroke on Konva element
+ */
+  private setStroke(element: any, color: string): void {
+    if (element && typeof element.stroke === 'function') {
+      element.stroke(color);
+    }
+  }
+
+  /**
+   * Type-safe method to set stroke width on Konva element
+   */
+  private setStrokeWidth(element: any, width: number): void {
+    if (element && typeof element.strokeWidth === 'function') {
+      element.strokeWidth(width);
+    }
+  }
+
+  /**
+ * Enhanced debug device selection state
+ */
+  debugDeviceSelection(): void {
+    console.log('🐛 Device Selection Debug:');
+    console.log('  Selected Device:', this.selectedDevice?.metadata?.name || 'None');
+    console.log('  Selected Shape Class:', this.selectedShape?.getClassName() || 'None');
+    console.log('  Selected Shape Type:', this.selectedShape ? typeof this.selectedShape : 'None');
+
+    if (this.selectedShape) {
+      console.log('  Shape DeviceId:', this.selectedShape.getAttr('deviceId'));
+      console.log('  Is Group:', this.isKonvaGroup(this.selectedShape));
+
+      if (this.isKonvaGroup(this.selectedShape)) {
+        const rect = this.getRectFromGroup(this.selectedShape);
+        console.log('  Has Rect Child:', !!rect);
+        if (rect) {
+          console.log('  Rect Stroke:', rect.stroke());
+          console.log('  Rect Stroke Width:', rect.strokeWidth());
+        }
+      }
+    }
+
+    const project = this.projectState.getCurrentProject();
+    console.log('  Total Devices:', project?.devices?.length || 0);
+
+    if (project?.devices!?.length > 0) {
+      console.log('  First Device Style:', project!.devices[0].style);
+    }
   }
 
   /**
