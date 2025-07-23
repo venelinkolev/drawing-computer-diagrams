@@ -1085,16 +1085,77 @@ export class AppComponent implements AfterViewInit, OnDestroy {
    * Set editor mode (SELECT, PAN, CONNECT, ANNOTATE)
    */
   setEditorMode(mode: 'select' | 'pan' | 'connect' | 'annotate'): void {
-    const canvasMode = mode as CanvasMode;
-    const result = this.editorState.setMode(canvasMode);
-    if (result.success) {
-      this.currentCanvasMode = canvasMode;
-      console.log(`🔧 Mode set to: ${mode}`);
-    } else {
-      console.error('❌ Failed to set mode:', result.error);
+    console.log(`🔧 SetEditorMode called with: ${mode}`);
+
+    // ✅ FIXED: Delegate to specialized methods for proper state management
+    switch (mode) {
+      case 'select':
+        console.log('➡️ Delegating to setSelectMode()');
+        this.setSelectMode();
+        break;
+
+      case 'connect':
+        console.log('➡️ Delegating to setConnectionMode()');
+        this.setConnectionMode();
+        break;
+
+      case 'pan':
+        console.log('➡️ Using EditorStateService for pan mode');
+        const panResult = this.editorState.setMode('pan' as any);
+        if (panResult.success) {
+          this.currentCanvasMode = 'pan' as any;
+          console.log('✅ Pan mode set successfully');
+        } else {
+          console.error('❌ Failed to set pan mode:', panResult.error);
+        }
+        break;
+
+      case 'annotate':
+        console.log('➡️ Using EditorStateService for annotate mode');
+        const annotateResult = this.editorState.setMode('annotate' as any);
+        if (annotateResult.success) {
+          this.currentCanvasMode = 'annotate' as any;
+          console.log('✅ Annotate mode set successfully');
+        } else {
+          console.error('❌ Failed to set annotate mode:', annotateResult.error);
+        }
+        break;
+
+      default:
+        console.error(`❌ Unknown mode: ${mode}`);
+        break;
     }
   }
 
+  /**
+ * DIAGNOSTIC: Debug which setSelectMode is being called
+ */
+  testModeSwitch(): void {
+    console.log('🧪 TESTING MODE SWITCH');
+    console.log('-'.repeat(30));
+
+    console.log('📋 Step 1: Current state before switch');
+    const beforeState = this.getCurrentEditorMode();
+    console.log(`   Current mode: ${beforeState}`);
+
+    console.log('📋 Step 2: Calling setSelectMode()...');
+    this.setSelectMode();
+
+    setTimeout(() => {
+      console.log('📋 Step 3: State after setSelectMode()');
+      const afterState = this.getCurrentEditorMode();
+      console.log(`   New mode: ${afterState}`);
+
+      // Check device states
+      if (this.layer) {
+        const devices = this.layer.find('.device');
+        const draggableCount = devices.filter((d: any) => d.draggable && d.draggable()).length;
+        console.log(`   Draggable devices: ${draggableCount}/${devices.length}`);
+      }
+
+      console.log('✅ Mode switch test complete');
+    }, 200);
+  }
   /**
    * Zoom in using EditorStateService
    */
@@ -3207,21 +3268,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     if (result.success) {
       console.log('✅ EditorStateService: Select mode set successfully');
 
-      // ✅ STEP 3: Wait for EditorStateService to set cursor, then confirm
+      // ✅ STEP 3: IMMEDIATE device re-setup (don't wait)
+      console.log('🔧 FORCING immediate device re-setup for SELECT mode...');
+      this.forceUpdateDeviceInteractionMode('select');
+
+      // ✅ STEP 4: Wait for EditorStateService cursor, then ensure correct cursor
       setTimeout(() => {
         if (this.stage && this.stage.container()) {
-          // Only set cursor if it's not already default
-          const currentCursor = this.stage.container().style.cursor;
-          if (currentCursor !== 'default' && currentCursor !== 'pointer') {
-            this.stage.container().style.cursor = 'default';
-            console.log('🎯 Cursor corrected to default');
-          } else {
-            console.log('✅ Cursor already default/pointer');
-          }
+          // Force cursor to default
+          this.stage.container().style.cursor = 'default';
+          console.log('🎯 Cursor FORCED to default in select mode');
         }
-
-        // ✅ STEP 4: Update device rendering (enable dragging in select mode)
-        this.updateDeviceInteractionMode('select');
 
         // ✅ STEP 5: Clear any connection selections
         if (this.connectionService) {
@@ -3229,11 +3286,121 @@ export class AppComponent implements AfterViewInit, OnDestroy {
           console.log('🔗 Connection selections cleared');
         }
 
-        console.log('✅ Select mode fully activated');
-      }, 50);
+        // ✅ STEP 6: Verify device setup worked
+        this.verifyDeviceSetup('select');
+
+        console.log('✅ Select mode fully activated with device verification');
+      }, 100); // Longer timeout for stability
 
     } else {
       console.error('❌ Failed to set select mode:', result.error);
+    }
+  }
+
+  /**
+ * ENHANCED: Force update all devices' interaction mode with detailed logging
+ */
+  private forceUpdateDeviceInteractionMode(mode: 'select' | 'connect'): void {
+    if (!this.layer) {
+      console.error('❌ Cannot update device interaction - layer not available');
+      return;
+    }
+
+    const deviceGroups = this.layer.find('.device');
+    console.log(`🔧 FORCE UPDATING ${deviceGroups.length} devices for ${mode} mode...`);
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    deviceGroups.forEach((deviceGroup: any, index: number) => {
+      if (deviceGroup instanceof Konva.Group) {
+        const deviceId = deviceGroup.getAttr('deviceId');
+        const device = this.projectState.getDevice(deviceId);
+
+        if (device) {
+          try {
+            console.log(`🔧 [${index + 1}/${deviceGroups.length}] Updating device: ${device.metadata.name}`);
+
+            // CRITICAL: Re-setup interaction for this device
+            this.setupDeviceInteraction(deviceGroup, device, mode);
+
+            // Verify the setup worked
+            const isDraggable = deviceGroup.draggable();
+            const expectedDraggable = mode === 'select';
+
+            if (isDraggable === expectedDraggable) {
+              console.log(`✅ Device ${device.metadata.name} updated successfully (draggable: ${isDraggable})`);
+              successCount++;
+            } else {
+              console.error(`❌ Device ${device.metadata.name} setup FAILED (expected draggable: ${expectedDraggable}, actual: ${isDraggable})`);
+              errorCount++;
+            }
+          } catch (error) {
+            console.error(`❌ Error updating device ${device.metadata?.name || 'unknown'}:`, error);
+            errorCount++;
+          }
+        } else {
+          console.error(`❌ Device not found in project for ID: ${deviceId}`);
+          errorCount++;
+        }
+      }
+    });
+
+    // Batch draw to apply changes
+    this.layer.batchDraw();
+
+    console.log(`✅ Device interaction update complete for ${mode} mode:`);
+    console.log(`   ✅ Success: ${successCount}`);
+    console.log(`   ❌ Errors: ${errorCount}`);
+    console.log(`   📊 Total: ${deviceGroups.length}`);
+
+    if (errorCount > 0) {
+      console.error(`⚠️ ${errorCount} devices failed to update properly!`);
+    }
+  }
+
+  /**
+   * DIAGNOSTIC: Verify device setup after mode change
+   */
+  private verifyDeviceSetup(expectedMode: 'select' | 'connect'): void {
+    if (!this.layer) return;
+
+    console.log(`🔍 VERIFYING device setup for ${expectedMode} mode...`);
+
+    const deviceGroups = this.layer.find('.device');
+    const expectedDraggable = expectedMode === 'select';
+
+    let correctSetup = 0;
+    let incorrectSetup = 0;
+
+    deviceGroups.forEach((deviceGroup: any) => {
+      const deviceId = deviceGroup.getAttr('deviceId');
+      const device = this.projectState.getDevice(deviceId);
+      const isDraggable = deviceGroup.draggable();
+
+      if (isDraggable === expectedDraggable) {
+        correctSetup++;
+        console.log(`✅ Device ${device?.metadata?.name || deviceId} correctly setup (draggable: ${isDraggable})`);
+      } else {
+        incorrectSetup++;
+        console.error(`❌ Device ${device?.metadata?.name || deviceId} INCORRECTLY setup (expected: ${expectedDraggable}, actual: ${isDraggable})`);
+      }
+    });
+
+    console.log(`🔍 VERIFICATION COMPLETE:`);
+    console.log(`   ✅ Correct: ${correctSetup}`);
+    console.log(`   ❌ Incorrect: ${incorrectSetup}`);
+
+    if (incorrectSetup > 0) {
+      console.error(`⚠️ CRITICAL: ${incorrectSetup} devices are not properly setup for ${expectedMode} mode!`);
+
+      // Try one more time if there are issues
+      console.log('🔄 Attempting one more device update...');
+      setTimeout(() => {
+        this.forceUpdateDeviceInteractionMode(expectedMode);
+      }, 200);
+    } else {
+      console.log(`✅ All devices correctly setup for ${expectedMode} mode!`);
     }
   }
 
