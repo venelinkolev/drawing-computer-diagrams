@@ -1,7 +1,7 @@
 import { Component, ElementRef, ViewChild, AfterViewInit, OnDestroy, inject, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
-import { Subject, takeUntil } from 'rxjs';
+import { Subject, takeUntil, take } from 'rxjs';
 
 // Angular Material imports
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -1879,7 +1879,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
     console.log(`🏁 Finishing connection to device: ${endDevice.metadata.name}`);
 
-    // ✅ Create connection via ConnectionService
+    // ✅ FIXED: Use drawingState$ observable instead of getDrawingState()
+    let startDeviceName = 'Unknown';
+    this.connectionService.drawingState$.pipe(
+      take(1) // Take only current value
+    ).subscribe(drawingState => {
+      startDeviceName = drawingState.startDevice?.metadata?.name || 'Unknown';
+    });
+
+    // ✅ DETAILED LOGGING: Track the full process
+    console.log('📊 Connection Finalization Process:');
+    console.log(`   🎯 From: ${startDeviceName}`);
+    console.log(`   🎯 To: ${endDevice.metadata.name}`);
+    console.log(`   📍 End Point: (${endPoint.x}, ${endPoint.y})`);
+
+    // ✅ Create connection via ConnectionService  
     const result = this.connectionService.finishDrawing(
       endDevice,
       endPoint,
@@ -1888,7 +1902,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     );
 
     if (result.success && result.connection) {
-      console.log('✅ Connection created successfully:', result.connection.id);
+      console.log('✅ ConnectionService: Connection created successfully:', result.connection.id);
 
       // ✅ PERFORMANCE FIX: Add to project WITHOUT triggering excessive re-renders
       try {
@@ -1902,6 +1916,12 @@ export class AppComponent implements AfterViewInit, OnDestroy {
             this.projectState.addConnection(result.connection);
             console.log(`📁 Connection added to project: ${result.connection.id}`);
             console.log(`📊 Total connections now: ${currentProject.connections.length + 1}`);
+
+            // ✅ FORCE IMMEDIATE RENDERING
+            console.log('🎨 Forcing immediate connection rendering...');
+            this.renderSingleConnection(result.connection);
+            this.layer.batchDraw();
+
           } else {
             console.log('⚠️ Connection already exists in project');
           }
@@ -1913,14 +1933,17 @@ export class AppComponent implements AfterViewInit, OnDestroy {
       console.error('❌ Failed to create connection:', result.error);
     }
 
+    // ✅ ALWAYS reset drawing state
     this.isDrawingConnection = false;
 
-    // Reset cursor properly
+    // Reset cursor properly  
     if (this.stage) {
       const editorState = this.editorState.getCurrentState();
       const cursor = editorState.interaction.mode === 'connect' ? 'crosshair' : 'default';
       this.stage.container().style.cursor = cursor;
     }
+
+    console.log('✅ Connection drawing finished and cleaned up');
   }
 
   /**
@@ -3184,14 +3207,21 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
       console.log(`🖱️ Mouse up at (${pointer.x}, ${pointer.y}) - Was dragging: ${isDragging}, Time: ${timeSinceMouseDown}ms`);
 
+      // ✅ PRIORITY FIX: Handle connection mode FIRST, before drag checks
       if (editorState.interaction.mode === 'connect') {
-        // ➕ CONNECTION MODE: Only finish if we have start device and not dragging
-        if (connectionStartDevice && this.isDrawingConnection && !isDragging) {
+        console.log('🔗 CONNECTION MODE: Processing mouse up...');
+
+        if (connectionStartDevice && this.isDrawingConnection) {
           const endDevice = this.getDeviceFromTarget(e.target);
 
+          console.log(`🔗 Connection attempt - Start: ${connectionStartDevice.metadata?.name}, End: ${endDevice?.metadata?.name || 'None'}`);
+
           if (endDevice && endDevice.id !== connectionStartDevice.id) {
-            console.log(`🏁 Ending connection at device: ${endDevice.metadata.name}`);
+            console.log(`🏁 FINALIZING connection: ${connectionStartDevice.metadata.name} → ${endDevice.metadata.name}`);
+
+            // ✅ FIXED: Finalize connection regardless of isDragging state in connection mode
             this.finishConnectionDrawing(endDevice, pointer);
+
           } else if (endDevice && endDevice.id === connectionStartDevice.id) {
             console.log('⚠️ Cannot connect device to itself - cancelling');
             this.cancelConnectionDrawing();
@@ -3199,11 +3229,19 @@ export class AppComponent implements AfterViewInit, OnDestroy {
             console.log('❌ Connection must end on a device - cancelling');
             this.cancelConnectionDrawing();
           }
+        } else {
+          console.log('⚠️ No active connection drawing to finalize');
         }
+
+        // ✅ IMPORTANT: Reset connection-specific states
+        connectionStartDevice = null;
+        // Don't return here - let other cleanup happen
+
       } else if (editorState.interaction.mode === 'pan' && isDragging && originalPanPosition) {
         const finalPosition = { ...editorState.pan.position };
         this.editorState.endDragPan(finalPosition, originalPanPosition, this.undoRedoService);
         console.log('🖐️ Pan drag ended with undo/redo support');
+
       } else if (editorState.interaction.mode === 'select' && !isDragging) {
         // ✅ SELECT MODE: Handle selection logic
         if (e.target === this.stage) {
@@ -3217,12 +3255,14 @@ export class AppComponent implements AfterViewInit, OnDestroy {
         }
       }
 
-      // Reset drag state
+      // ✅ ALWAYS reset drag state at the end
       dragStartPosition = null;
       originalPanPosition = null;
       isDragging = false;
       connectionStartDevice = null;
       mouseDownTime = 0;
+
+      console.log('✅ Mouse up event processing complete');
     });
 
     // Prevent context menu on right click
